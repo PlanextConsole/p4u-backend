@@ -1,0 +1,38 @@
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+
+@Entity('commerce_settlements')
+export class CommerceSettlement {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column({ name: 'vendor_id', type: 'varchar', length: 36, nullable: true })
+  @Index()
+  vendorId!: string | null;
+
+  @Column({ name: 'order_id', type: 'varchar', length: 36, nullable: true })
+  @Index()
+  orderId!: string | null;
+
+  @Column({ name: 'settlement_type', type: 'varchar', length: 32, default: 'cash' })
+  @Index()
+  settlementType!: string;
+
+  @Column({ type: 'varchar', length: 64, default: 'pending' })
+  @Index()
+  status!: string;
+
+  @Column({ name: 'amount', type: 'decimal', precision: 12, scale: 2, default: 0 })
+  amount!: string;
+
+  @Column({ name: 'document_url', type: 'varchar', length: 512, nullable: true })
+  documentUrl!: string | null;
+
+  @Column({ type: 'json', nullable: true })
+  metadata!: Record<string, unknown> | null;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt!: Date;
+}

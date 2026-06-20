@@ -1,0 +1,337 @@
+import { In } from 'typeorm';
+import { AppDataSource } from '../config/database';
+import { ProductCategory } from '../entities/ProductCategory';
+import { ProductSubcategory } from '../entities/ProductSubcategory';
+import { ServiceCategory } from '../entities/ServiceCategory';
+import { CatalogServiceItem } from '../entities/CatalogServiceItem';
+import { Product } from '../entities/Product';
+import { Vendor } from '../entities/Vendor';
+import { VendorService } from '../entities/VendorService';
+
+type Paging = { limit: number; offset: number };
+
+export type CategoryBrowseFilter = {
+  categoryId?: string;
+  subcategoryId?: string;
+};
+
+export type CategoryKind = 'product' | 'service';
+
+/** Unified category shape for web clients (shop vs services use different backing tables). */
+export type PublicCategory = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  thumbnailUrl?: string | null;
+  iconUrl?: string | null;
+  bannerUrls?: string[] | null;
+  isActive: boolean;
+};
+
+export class CatalogQueryService {
+  /** Product browse: root category id + all its product subcategory ids. */
+  private async collectProductBrowseIds(rootProductCategoryId: string): Promise<string[]> {
+    const subRepo = AppDataSource.getRepository(ProductSubcategory);
+    const subs = await subRepo.find({
+      where: { productCategoryId: rootProductCategoryId },
+      select: ['id'],
+    });
+    return [rootProductCategoryId, ...subs.map((s) => s.id)];
+  }
+
+  async listCategories(includeInactive: boolean, kind: CategoryKind): Promise<PublicCategory[]> {
+    if (kind === 'service') {
+      const repo = AppDataSource.getRepository(ServiceCategory);
+      const qb = repo.createQueryBuilder('c').orderBy('c.sortOrder', 'ASC').addOrderBy('c.name', 'ASC');
+      if (!includeInactive) qb.andWhere('c.isActive = :a', { a: true });
+      const rows = await qb.getMany();
+      return rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        parentId: null,
+        thumbnailUrl: c.thumbnailUrl,
+        iconUrl: c.iconUrl,
+        bannerUrls: c.bannerUrls,
+        isActive: c.isActive,
+      }));
+    }
+    const repo = AppDataSource.getRepository(ProductCategory);
+    const qb = repo.createQueryBuilder('c').orderBy('c.sortOrder', 'ASC').addOrderBy('c.name', 'ASC');
+    if (!includeInactive) qb.andWhere('c.isActive = :a', { a: true });
+    const rows = await qb.getMany();
+    return rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      parentId: null,
+      thumbnailUrl: c.thumbnailUrl,
+      iconUrl: c.iconUrl,
+      bannerUrls: c.bannerUrls,
+      isActive: c.isActive,
+    }));
+  }
+
+  /** Product: subcategories under a product category. Service: none (flat taxonomy). */
+  async listCategoryChildren(parentId: string, includeInactive: boolean, kind: CategoryKind): Promise<PublicCategory[]> {
+    if (kind === 'service') return [];
+
+    const repo = AppDataSource.getRepository(ProductSubcategory);
+    const qb = repo
+      .createQueryBuilder('s')
+      .where('s.productCategoryId = :parentId', { parentId })
+      .orderBy('s.sortOrder', 'ASC')
+      .addOrderBy('s.name', 'ASC');
+    if (!includeInactive) qb.andWhere('s.isActive = :a', { a: true });
+    const rows = await qb.getMany();
+    return rows.map((s) => ({
+      id: s.id,
+      name: s.name,
+      parentId: s.productCategoryId,
+      thumbnailUrl: s.thumbnailUrl,
+      iconUrl: null,
+      bannerUrls: s.bannerUrls,
+      isActive: s.isActive,
+    }));
+  }
+
+  async listVendors(includeInactive: boolean, paging: Paging, filters?: { vendorKind?: string }) {
+    const repo = AppDataSource.getRepository(Vendor);
+    const qb = repo
+      .createQueryBuilder('v')
+      .orderBy('v.updatedAt', 'DESC')
+      .addOrderBy('v.businessName', 'ASC')
+      .limit(paging.limit)
+      .offset(paging.offset);
+
+    if (!includeInactive) qb.andWhere('v.status = :status', { status: 'active' });
+    const kind = filters?.vendorKind?.trim().toLowerCase();
+    if (kind === 'product' || kind === 'service') {
+      qb.andWhere('v.vendorKind = :vk', { vk: kind });
+    }
+    const [items, total] = await qb.getManyAndCount();
+    return { items, total };
+  }
+
+  async getVendor(id: string, includeInactive: boolean) {
+    const repo = AppDataSource.getRepository(Vendor);
+    const where = includeInactive ? { id } : { id, status: 'active' };
+    return repo.findOne({ where });
+  }
+
+  async listProducts(vendorId: string | undefined, includeInactive: boolean, paging: Paging) {
+    const repo = AppDataSource.getRepository(Product);
+    const qb = repo
+      .createQueryBuilder('p')
+      .orderBy('p.updatedAt', 'DESC')
+      .addOrderBy('p.name', 'ASC')
+      .limit(paging.limit)
+      .offset(paging.offset);
+
+    if (vendorId) qb.andWhere('p.vendorId = :vendorId', { vendorId });
+    if (!includeInactive) qb.andWhere('p.isActive = :active', { active: true });
+
+    const [items, total] = await qb.getManyAndCount();
+    return { items, total };
+  }
+
+  async getProduct(id: string, includeInactive: boolean) {
+    const repo = AppDataSource.getRepository(Product);
+    const where = includeInactive ? { id } : { id, isActive: true };
+    return repo.findOne({ where });
+  }
+
+  async listProductsForBrowse(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {
+    const repo = AppDataSource.getRepository(Product);
+    const qb = repo
+      .createQueryBuilder('p')
+      .orderBy('p.updatedAt', 'DESC')
+      .addOrderBy('p.name', 'ASC')
+      .limit(paging.limit)
+      .offset(paging.offset);
+
+    if (!includeInactive) qb.andWhere('p.isActive = :active', { active: true });
+
+    const sub = filters?.subcategoryId?.trim();
+    const cat = filters?.categoryId?.trim();
+    if (sub) {
+      qb.andWhere('p.categoryId = :cid', { cid: sub });
+    } else if (cat) {
+      const ids = await this.collectProductBrowseIds(cat);
+      qb.andWhere('p.categoryId IN (:...cids)', { cids: ids.length ? ids : ['__none__'] });
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+    const vRepo = AppDataSource.getRepository(Vendor);
+    const vIds = [...new Set(items.map((p) => p.vendorId).filter(Boolean))] as string[];
+    let vendorMap = new Map<string, Vendor>();
+    if (vIds.length) {
+      const vendors = await vRepo.find({ where: { id: In(vIds) } });
+      vendorMap = new Map(vendors.map((v) => [v.id, v]));
+    }
+    const enriched = items.map((p) => {
+      const v = p.vendorId ? vendorMap.get(p.vendorId) : undefined;
+      return {
+        ...p,
+        vendorBusinessName: v?.businessName ?? null,
+        vendorLogoUrl: v?.logoUrl ?? null,
+      };
+    });
+    return { items: enriched, total };
+  }
+
+  async listServices(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {
+    const repo = AppDataSource.getRepository(CatalogServiceItem);
+    const qb = repo
+      .createQueryBuilder('s')
+      .orderBy('s.sortOrder', 'ASC')
+      .addOrderBy('s.name', 'ASC')
+      .limit(paging.limit)
+      .offset(paging.offset);
+
+    if (!includeInactive) qb.andWhere('s.isActive = :a', { a: true });
+
+    const cat = filters?.categoryId?.trim();
+    if (cat) {
+      qb.andWhere('s.serviceCategoryId = :sc', { sc: cat });
+    }
+
+    const [items, total] = await qb.getManyAndCount();
+    return { items, total };
+  }
+
+  async listVendorOffersForService(serviceId: string, includeInactiveVendors: boolean) {
+    const vsRepo = AppDataSource.getRepository(VendorService);
+    const vRepo = AppDataSource.getRepository(Vendor);
+    const offers = await vsRepo.find({
+      where: { serviceId, isActive: true },
+      order: { price: 'ASC' },
+    });
+    if (!offers.length) {
+      const vendors = await vRepo.find();
+      const target = String(serviceId);
+      const matched = vendors.filter((v) => {
+        if (!includeInactiveVendors && v.status !== 'active') return false;
+        if (String(v.vendorKind || '').toLowerCase() === 'product') return false;
+        const raw = (v as unknown as { servicesJson?: unknown }).servicesJson;
+        if (raw == null) return false;
+        if (Array.isArray(raw)) {
+          return raw.some((entry) => {
+            if (entry == null) return false;
+            if (typeof entry === 'string' || typeof entry === 'number') {
+              return String(entry) === target;
+            }
+            if (typeof entry === 'object') {
+              const obj = entry as Record<string, unknown>;
+              const id = obj.id ?? obj.serviceId ?? obj.value;
+              return id != null && String(id) === target;
+            }
+            return false;
+          });
+        }
+        return false;
+      });
+
+      return matched.map((v) => ({
+        vendorServiceId: `legacy-${v.id}-${target}`,
+        price: '0',
+        isAvailable: true,
+        vendor: {
+          id: v.id,
+          businessName: v.businessName,
+          logoUrl: v.logoUrl,
+          thumbnailUrl: v.thumbnailUrl,
+        },
+      }));
+    }
+
+    const vendorIds = [...new Set(offers.map((o) => o.vendorId))];
+    const vendors = await vRepo.find({ where: { id: In(vendorIds) } });
+    const vmap = new Map(vendors.map((v) => [v.id, v]));
+
+    const out: Array<{
+      vendorServiceId: string;
+      price: string;
+      isAvailable: boolean;
+      vendor: { id: string; businessName: string; logoUrl: string | null; thumbnailUrl: string | null } | null;
+    }> = [];
+
+    for (const o of offers) {
+      const v = vmap.get(o.vendorId);
+      if (!v) continue;
+      if (!includeInactiveVendors && v.status !== 'active') continue;
+      if (String(v.vendorKind || '').toLowerCase() === 'product') continue;
+      out.push({
+        vendorServiceId: o.id,
+        price: o.price,
+        isAvailable: o.isAvailable,
+        vendor: {
+          id: v.id,
+          businessName: v.businessName,
+          logoUrl: v.logoUrl,
+          thumbnailUrl: v.thumbnailUrl,
+        },
+      });
+    }
+    return out;
+  }
+
+  async getService(id: string, includeInactive: boolean) {
+    const repo = AppDataSource.getRepository(CatalogServiceItem);
+    const where = includeInactive ? { id } : { id, isActive: true };
+    return repo.findOne({ where });
+  }
+
+  async searchAll(q: string, includeInactive: boolean, paging: Paging) {
+    const like = `%${q}%`;
+    const items: Array<Record<string, unknown>> = [];
+
+    const pcQb = AppDataSource.getRepository(ProductCategory)
+      .createQueryBuilder('c')
+      .where('c.name LIKE :like', { like })
+      .orderBy('c.sortOrder', 'ASC')
+      .addOrderBy('c.name', 'ASC')
+      .limit(paging.limit);
+    if (!includeInactive) pcQb.andWhere('c.isActive = :a', { a: true });
+    const pcats = await pcQb.getMany();
+    items.push(...pcats.map((c) => ({ type: 'category', categoryKind: 'product', ...c })));
+
+    const scQb = AppDataSource.getRepository(ServiceCategory)
+      .createQueryBuilder('c')
+      .where('c.name LIKE :like', { like })
+      .orderBy('c.sortOrder', 'ASC')
+      .addOrderBy('c.name', 'ASC')
+      .limit(paging.limit);
+    if (!includeInactive) scQb.andWhere('c.isActive = :a', { a: true });
+    const scats = await scQb.getMany();
+    items.push(...scats.map((c) => ({ type: 'category', categoryKind: 'service', ...c })));
+
+    const vendorsQb = AppDataSource.getRepository(Vendor)
+      .createQueryBuilder('v')
+      .where('v.businessName LIKE :like OR v.ownerName LIKE :like', { like })
+      .orderBy('v.updatedAt', 'DESC')
+      .limit(paging.limit);
+    if (!includeInactive) vendorsQb.andWhere('v.status = :status', { status: 'active' });
+    const vendors = await vendorsQb.getMany();
+    items.push(...vendors.map((v) => ({ type: 'vendor', ...v })));
+
+    const productsQb = AppDataSource.getRepository(Product)
+      .createQueryBuilder('p')
+      .where('p.name LIKE :like OR p.description LIKE :like', { like })
+      .orderBy('p.updatedAt', 'DESC')
+      .limit(paging.limit);
+    if (!includeInactive) productsQb.andWhere('p.isActive = :active', { active: true });
+    const products = await productsQb.getMany();
+    items.push(...products.map((p) => ({ type: 'product', ...p })));
+
+    const servicesQb = AppDataSource.getRepository(CatalogServiceItem)
+      .createQueryBuilder('s')
+      .where('s.name LIKE :like OR s.description LIKE :like', { like })
+      .orderBy('s.sortOrder', 'ASC')
+      .addOrderBy('s.name', 'ASC')
+      .limit(paging.limit);
+    if (!includeInactive) servicesQb.andWhere('s.isActive = :a', { a: true });
+    const services = await servicesQb.getMany();
+    items.push(...services.map((s) => ({ type: 'service', ...s })));
+
+    return items.slice(paging.offset, paging.offset + paging.limit);
+  }
+}

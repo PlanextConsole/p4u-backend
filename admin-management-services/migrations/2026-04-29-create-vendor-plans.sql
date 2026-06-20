@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS vendor_plans (
+  id char(36) NOT NULL,
+  plan_name varchar(120) NOT NULL,
+  description text NULL,
+  plan_type varchar(16) NOT NULL,
+  tier int NOT NULL DEFAULT 1,
+  price decimal(12,2) NOT NULL DEFAULT 0,
+  validity_days int NOT NULL DEFAULT 30,
+  visibility_type varchar(24) NOT NULL DEFAULT 'radius',
+  radius_km decimal(8,2) NULL,
+  commission_percent decimal(5,2) NOT NULL DEFAULT 0,
+  max_user_redemption_percent decimal(5,2) NOT NULL DEFAULT 0,
+  payment_mode varchar(16) NOT NULL DEFAULT 'both',
+  promo_banner_ads tinyint(1) NOT NULL DEFAULT 0,
+  promo_video_ads tinyint(1) NOT NULL DEFAULT 0,
+  promo_priority_listing tinyint(1) NOT NULL DEFAULT 0,
+  is_active tinyint(1) NOT NULL DEFAULT 1,
+  metadata json NULL,
+  created_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  KEY idx_vendor_plans_type_tier (plan_type, tier),
+  KEY idx_vendor_plans_active (is_active),
+  KEY idx_vendor_plans_name (plan_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

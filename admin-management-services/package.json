@@ -1,0 +1,42 @@
+{
+  "name": "admin-management-services",
+  "version": "1.0.0",
+  "description": "P4U Admin platform API — hierarchy, layouts, audit (PRD-aligned MVP)",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "migrate:vendor-kind": "node scripts/run-vendor-kind-migration.cjs",
+    "verify:vendor-kind": "node scripts/verify-vendor-kind-column.cjs",
+    "migrate:service-base-price": "node scripts/run-service-base-price-migration.cjs",
+    "migrate:vendor-plans": "node scripts/run-vendor-plans-migration.cjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1041.0",
+    "adm-zip": "^0.5.17",
+    "axios": "^1.6.2",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.0",
+    "cors": "^2.8.5",
+    "csv-parse": "^6.2.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-jwt": "^8.4.1",
+    "express-rate-limit": "^7.4.1",
+    "jwks-rsa": "^3.1.0",
+    "multer": "^2.1.1",
+    "mysql2": "^3.6.5",
+    "typeorm": "^0.3.17"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^20.10.5",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  }
+}

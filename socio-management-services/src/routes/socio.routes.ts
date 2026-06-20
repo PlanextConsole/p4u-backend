@@ -1,0 +1,339 @@
+import { Router, Request, Response } from 'express';
+import { FeedService } from '../service/feed.service';
+import { InteractionService } from '../service/interaction.service';
+import { StoryService } from '../service/story.service';
+import { jwtAuth, requireAnyRole, requirePermission } from '../middleware/authMiddleware';
+import { sendSuccess, sendCreated, sendNotFound, sendBadRequest } from '../middleware/responseEnvelope';
+
+const userIdFromAuth = (req: Request): string | null => {
+  const auth = (req as any).auth;
+  return String(auth?.sub || '').trim() || null;
+};
+
+const parsePaging = (req: Request) => {
+  const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
+  const offsetRaw = parseInt(String(req.query.offset ?? '0'), 10);
+  return {
+    limit: Number.isNaN(limitRaw) ? 20 : Math.min(Math.max(limitRaw, 1), 100),
+    offset: Number.isNaN(offsetRaw) ? 0 : Math.max(offsetRaw, 0),
+  };
+};
+
+export function createSocioRoutes(): Router {
+  const router = Router();
+  const feedSvc = new FeedService();
+  const interactionSvc = new InteractionService();
+  const storySvc = new StoryService();
+
+  /* ───── public health ───── */
+  router.get('/public/health', (_req: Request, res: Response) => {
+    sendSuccess(res, {
+      status: 'UP',
+      service: 'socio-management-service',
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  /* ───── JWT gate ───── */
+  router.use(jwtAuth);
+
+  /* ───── Feed ───── */
+  router.get(
+    '/feed',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const { limit, offset } = parsePaging(req);
+      const rows = await feedSvc.getFeed(userId, limit, offset);
+      sendSuccess(res, rows);
+    }
+  );
+
+  router.get(
+    '/feed/public',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const { limit, offset } = parsePaging(req);
+      const rows = await feedSvc.getPublicFeed(limit, offset);
+      sendSuccess(res, rows);
+    }
+  );
+
+  router.get(
+    '/explore/tags',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
+      const limit = Number.isNaN(limitRaw) ? 20 : Math.min(Math.max(limitRaw, 1), 50);
+      const items = await feedSvc.getTrendingTags(limit);
+      sendSuccess(res, { items });
+    },
+  );
+
+  router.get(
+    '/explore/places',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
+      const limit = Number.isNaN(limitRaw) ? 20 : Math.min(Math.max(limitRaw, 1), 50);
+      const items = await feedSvc.getTrendingPlaces(limit);
+      sendSuccess(res, { items });
+    },
+  );
+
+  /* ───── Posts ───── */
+  router.get(
+    '/posts/:postId',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const post = await feedSvc.getPost(req.params.postId);
+      if (!post) return sendNotFound(res, 'Post not found');
+      sendSuccess(res, post);
+    }
+  );
+
+  router.post(
+    '/posts',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.post.write'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const { contentText, mediaUrls, postType, visibility, location, tags } = req.body ?? {};
+      const tagList = Array.isArray(tags)
+        ? tags.map((t: unknown) => String(t))
+        : typeof tags === 'string'
+          ? tags.split(/[,\s#]+/).map((t) => t.trim()).filter(Boolean)
+          : undefined;
+      const post = await feedSvc.createPost(userId, 'customer', {
+        contentText,
+        mediaUrls,
+        postType,
+        visibility,
+        location,
+        tags: tagList,
+      });
+      sendCreated(res, post);
+    }
+  );
+
+  router.delete(
+    '/posts/:postId',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.post.write'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const result = await feedSvc.deletePost(userId, req.params.postId);
+      if (!result) return sendNotFound(res, 'Post not found or not owned by user');
+      sendSuccess(res, result);
+    }
+  );
+
+  /* ───── Likes ───── */
+  router.post(
+    '/posts/:postId/like',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const like = await interactionSvc.likePost(userId, req.params.postId);
+      sendCreated(res, like);
+    }
+  );
+
+  router.delete(
+    '/posts/:postId/like',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const removed = await interactionSvc.unlikePost(userId, req.params.postId);
+      if (!removed) return sendNotFound(res, 'Like not found');
+      sendSuccess(res, { message: 'Unliked' });
+    }
+  );
+
+  /* ───── Shares ───── */
+  router.post(
+    '/posts/:postId/share',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const result = await interactionSvc.sharePost(userId, req.params.postId);
+      sendCreated(res, result);
+    }
+  );
+
+  /* ───── Comments ───── */
+  router.get(
+    '/posts/:postId/comments',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const { limit, offset } = parsePaging(req);
+      const [rows, total] = await interactionSvc.listComments(req.params.postId, limit, offset);
+      sendSuccess(res, rows, 200, { total, limit, offset });
+    }
+  );
+
+  router.post(
+    '/posts/:postId/comments',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const { contentText, parentCommentId } = req.body ?? {};
+      if (!contentText) return sendBadRequest(res, 'contentText is required');
+      const comment = await interactionSvc.addComment(userId, req.params.postId, { contentText, parentCommentId });
+      sendCreated(res, comment);
+    }
+  );
+
+  /* ───── Follow ───── */
+  router.post(
+    '/users/:userId/follow',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const followerId = userIdFromAuth(req);
+      if (!followerId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const follow = await interactionSvc.followUser(followerId, req.params.userId);
+        sendCreated(res, follow);
+      } catch (err: any) {
+        if (err.message === 'Cannot follow yourself') return sendBadRequest(res, err.message);
+        throw err;
+      }
+    }
+  );
+
+  router.delete(
+    '/users/:userId/follow',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const followerId = userIdFromAuth(req);
+      if (!followerId) return sendBadRequest(res, 'user id missing in token');
+      const removed = await interactionSvc.unfollowUser(followerId, req.params.userId);
+      if (!removed) return sendNotFound(res, 'Follow relationship not found');
+      sendSuccess(res, { message: 'Unfollowed' });
+    }
+  );
+
+  router.get(
+    '/users/:userId/followers',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const { limit, offset } = parsePaging(req);
+      const [rows, total] = await interactionSvc.getFollowers(req.params.userId, limit, offset);
+      sendSuccess(res, rows, 200, { total, limit, offset });
+    }
+  );
+
+  router.get(
+    '/users/:userId/following',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const { limit, offset } = parsePaging(req);
+      const [rows, total] = await interactionSvc.getFollowing(req.params.userId, limit, offset);
+      sendSuccess(res, rows, 200, { total, limit, offset });
+    }
+  );
+
+  router.get(
+    '/users/suggestions',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const limitRaw = parseInt(String(req.query.limit ?? '10'), 10);
+      const limit = Number.isNaN(limitRaw) ? 10 : Math.min(Math.max(limitRaw, 1), 100);
+      const suggestions = await interactionSvc.getSuggestions(userId, limit);
+      sendSuccess(res, suggestions);
+    }
+  );
+
+  /* ───── Stories ───── */
+  router.get(
+    '/stories/feed',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const stories = await storySvc.getFeedStories(userId);
+      sendSuccess(res, stories);
+    }
+  );
+
+  router.get(
+    '/stories/me',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const stories = await storySvc.getMyStories(userId);
+      sendSuccess(res, stories);
+    }
+  );
+
+  router.post(
+    '/stories',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.post.write'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const { mediaUrl, mediaType, textOverlay } = req.body ?? {};
+      if (!mediaUrl) return sendBadRequest(res, 'mediaUrl is required');
+      const story = await storySvc.createStory(userId, { mediaUrl, mediaType, textOverlay });
+      sendCreated(res, story);
+    }
+  );
+
+  router.post(
+    '/stories/:storyId/view',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const story = await storySvc.markStoryViewed(req.params.storyId);
+      if (!story) return sendNotFound(res, 'Story not found');
+      sendSuccess(res, story);
+    }
+  );
+
+  router.post(
+    '/stories/:storyId/like',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const result = await storySvc.likeStory(userId, req.params.storyId);
+        sendCreated(res, result);
+      } catch (err: any) {
+        if (err.message === 'Story not found') return sendNotFound(res, err.message);
+        throw err;
+      }
+    }
+  );
+
+  return router;
+}
