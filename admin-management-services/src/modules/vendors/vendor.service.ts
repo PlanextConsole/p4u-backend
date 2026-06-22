@@ -9,6 +9,169 @@ import { UpdateVendorEnquiryDto } from './dto/update-vendor-enquiry.dto';
 import { ApproveVendorRequestDto } from './dto/approve-vendor-request.dto';
 import { VendorReferralService } from './vendor.referral.service';
 
+const PENDING_VENDOR_STATUSES = ['pending', 'not_verified'] as const;
+
+export interface VendorPendingApplication {
+  id: string;
+  catalogVendorId: string | null;
+  signupRequestId: string | null;
+  source: 'catalog' | 'signup';
+  businessName: string;
+  ownerName: string;
+  email: string | null;
+  phone: string | null;
+  vendorKind: VendorKind;
+  vendorType: 'PRODUCT' | 'SERVICE';
+  categoryLabel: string | null;
+  businessType: string | null;
+  gst: string | null;
+  pan: string | null;
+  status: string;
+  createdAt: string;
+}
+
+function normalizePhoneDigits(phone: string | null | undefined): string {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+function dedupeApplicationKey(
+  keycloakUserId: string | null | undefined,
+  phone: string | null | undefined,
+  fallback: string,
+): string {
+  const kc = String(keycloakUserId ?? '').trim();
+  if (kc) return `kc:${kc}`;
+  const digits = normalizePhoneDigits(phone);
+  if (digits) return `ph:${digits}`;
+  return `id:${fallback}`;
+}
+
+function resolveSignupVendorKind(payload: Record<string, unknown>): VendorKind {
+  const nested =
+    payload.vendorPayload && typeof payload.vendorPayload === 'object'
+      ? (payload.vendorPayload as Record<string, unknown>)
+      : null;
+  const raw = String(
+    payload.vendorType ??
+      payload.vendor_type ??
+      nested?.vendorType ??
+      payload.vendorKind ??
+      payload.vendor_kind ??
+      nested?.vendorKind ??
+      payload.vendorCategory ??
+      payload.vendor_category ??
+      '',
+  )
+    .trim()
+    .toUpperCase();
+  if (raw === 'SERVICE' || raw.includes('SERVICE')) return 'service';
+  if (raw === 'PRODUCT' || raw.includes('PRODUCT')) return 'product';
+  const vk = String(payload.vendorKind ?? payload.vendor_kind ?? nested?.vendorKind ?? '')
+    .trim()
+    .toLowerCase();
+  if (vk === 'service') return 'service';
+  return 'product';
+}
+
+function vendorRowKind(v: Pick<Vendor, 'vendorKind' | 'vendorType'>): VendorKind {
+  const kind = String(v.vendorKind || '').trim().toLowerCase();
+  const type = String(v.vendorType || '').trim().toUpperCase();
+  return kind === 'service' || type === 'SERVICE' ? 'service' : 'product';
+}
+
+function firstJsonLabel(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value.trim() || null;
+  if (Array.isArray(value) && value.length > 0) {
+    const first = value[0];
+    if (typeof first === 'string') return first.trim() || null;
+    if (first && typeof first === 'object') {
+      const o = first as Record<string, unknown>;
+      const label = o.name ?? o.slug ?? o.label;
+      return label != null ? String(label).trim() || null : null;
+    }
+  }
+  return null;
+}
+
+function categoryLabelFromPayload(
+  payload: Record<string, unknown>,
+  vendorKind: VendorKind,
+): string | null {
+  if (vendorKind === 'service') {
+    return (
+      firstJsonLabel(payload.servicesJson ?? payload.services) ??
+      (payload.serviceName != null ? String(payload.serviceName).trim() || null : null)
+    );
+  }
+  return (
+    firstJsonLabel(payload.categoriesJson ?? payload.categories) ??
+    (payload.categorySlug != null ? String(payload.categorySlug).trim() || null : null) ??
+    (payload.vendorCategory != null ? String(payload.vendorCategory).trim() || null : null)
+  );
+}
+
+function mapVendorToPendingApplication(v: Vendor): VendorPendingApplication {
+  const kind = vendorRowKind(v);
+  return {
+    id: v.id,
+    catalogVendorId: v.id,
+    signupRequestId: null,
+    source: 'catalog',
+    businessName: v.businessName,
+    ownerName: v.ownerName,
+    email: v.email,
+    phone: v.phone,
+    vendorKind: kind,
+    vendorType: kind === 'service' ? 'SERVICE' : 'PRODUCT',
+    categoryLabel:
+      kind === 'service'
+        ? firstJsonLabel(v.servicesJson)
+        : firstJsonLabel(v.categoriesJson),
+    businessType: null,
+    gst: v.gst,
+    pan: v.pan,
+    status: v.status,
+    createdAt: v.createdAt instanceof Date ? v.createdAt.toISOString() : String(v.createdAt),
+  };
+}
+
+function mapSignupToPendingApplication(
+  row: VendorRequest,
+  vendorKind: VendorKind,
+): VendorPendingApplication {
+  const payload = (row.payload || {}) as Record<string, unknown>;
+  const nested =
+    payload.vendorPayload && typeof payload.vendorPayload === 'object'
+      ? (payload.vendorPayload as Record<string, unknown>)
+      : null;
+  return {
+    id: `signup-${row.id}`,
+    catalogVendorId: null,
+    signupRequestId: row.id,
+    source: 'signup',
+    businessName: String(payload.businessName ?? nested?.businessName ?? '—').trim() || '—',
+    ownerName: String(payload.ownerName ?? nested?.ownerName ?? '—').trim() || '—',
+    email: payload.email != null ? String(payload.email).trim() || null : null,
+    phone: payload.phone != null ? String(payload.phone).trim() || null : null,
+    vendorKind,
+    vendorType: vendorKind === 'service' ? 'SERVICE' : 'PRODUCT',
+    categoryLabel: categoryLabelFromPayload(payload, vendorKind),
+    businessType:
+      payload.businessType != null
+        ? String(payload.businessType).trim() || null
+        : nested?.businessType != null
+          ? String(nested.businessType).trim() || null
+          : null,
+    gst: payload.gst != null ? String(payload.gst).trim() || null : null,
+    pan: payload.pan != null ? String(payload.pan).trim() || null : null,
+    status: 'pending',
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  };
+}
+
 export class VendorAdminService {
   private audit = new AuditService();
   private vendorReferral = new VendorReferralService();
@@ -42,38 +205,120 @@ export class VendorAdminService {
     return { items, total };
   }
 
+  private async findVendorByPhoneDigits(phone: string | null | undefined): Promise<Vendor | null> {
+    const digits = normalizePhoneDigits(phone);
+    if (!digits) return null;
+    const repo = AppDataSource.getRepository(Vendor);
+    return repo
+      .createQueryBuilder('vendor')
+      .where(`RIGHT(REGEXP_REPLACE(COALESCE(vendor.phone, ''), '[^0-9]', ''), 10) = :digits`, {
+        digits,
+      })
+      .getOne();
+  }
+
+  /**
+   * Unified pending queue for admin approval: catalog rows awaiting review plus
+   * signup requests that never received a catalog mirror row.
+   */
+  async listPendingApplications(vendorKind?: VendorKind): Promise<{ items: VendorPendingApplication[] }> {
+    const vendorRepo = AppDataSource.getRepository(Vendor);
+    const reqRepo = AppDataSource.getRepository(VendorRequest);
+
+    const catalogQb = vendorRepo
+      .createQueryBuilder('vendor')
+      .where('vendor.status IN (:...statuses)', { statuses: [...PENDING_VENDOR_STATUSES] })
+      .orderBy('vendor.createdAt', 'DESC');
+    if (vendorKind === 'service') {
+      catalogQb.andWhere(
+        `(LOWER(TRIM(COALESCE(vendor.vendorKind, ''))) = :serviceKind OR UPPER(TRIM(COALESCE(vendor.vendorType, ''))) = :serviceType)`,
+        { serviceKind: 'service', serviceType: 'SERVICE' },
+      );
+    } else if (vendorKind === 'product') {
+      catalogQb.andWhere(
+        `NOT (
+          LOWER(TRIM(COALESCE(vendor.vendorKind, ''))) = :serviceKind
+          OR UPPER(TRIM(COALESCE(vendor.vendorType, ''))) = :serviceType
+        )`,
+        { serviceKind: 'service', serviceType: 'SERVICE' },
+      );
+    }
+    const catalogRows = await catalogQb.getMany();
+
+    const items: VendorPendingApplication[] = [];
+    const seen = new Set<string>();
+
+    for (const v of catalogRows) {
+      seen.add(dedupeApplicationKey(v.keycloakUserId, v.phone, v.id));
+      items.push(mapVendorToPendingApplication(v));
+    }
+
+    const signups = await reqRepo.find({
+      where: { status: 'pending' },
+      order: { createdAt: 'DESC' },
+      take: 500,
+    });
+
+    for (const row of signups) {
+      const payload = (row.payload || {}) as Record<string, unknown>;
+      const rowKind = resolveSignupVendorKind(payload);
+      if (vendorKind && rowKind !== vendorKind) continue;
+
+      const kc = String(payload.keycloakUserId ?? payload.keycloak_user_id ?? '').trim();
+      const phoneRaw = String(payload.phone ?? '').trim();
+      const key = dedupeApplicationKey(kc || null, phoneRaw || null, row.id);
+      if (seen.has(key)) continue;
+
+      let linked: Vendor | null = null;
+      if (kc) {
+        linked = await vendorRepo.findOne({ where: { keycloakUserId: kc } });
+      }
+      if (!linked && phoneRaw) {
+        linked = await this.findVendorByPhoneDigits(phoneRaw);
+      }
+
+      if (linked) {
+        if (vendorKind && vendorRowKind(linked) !== vendorKind) continue;
+        if (PENDING_VENDOR_STATUSES.includes(linked.status as (typeof PENDING_VENDOR_STATUSES)[number])) {
+          continue;
+        }
+        if (linked.status === 'active') continue;
+        continue;
+      }
+
+      items.push(mapSignupToPendingApplication(row, rowKind));
+      seen.add(key);
+    }
+
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return { items };
+  }
+
   /**
    * Pending vendor_signup_requests with no matching catalog_vendors row yet
    * (registration succeeded in auth but catalog mirror failed, or legacy flow).
    */
   async listPendingSignupsWithoutCatalog(vendorKind?: VendorKind): Promise<VendorRequest[]> {
     const reqRepo = AppDataSource.getRepository(VendorRequest);
-    const vendorRepo = AppDataSource.getRepository(Vendor);
     const rows = await reqRepo.find({
       where: { status: 'pending' },
       order: { createdAt: 'DESC' },
-      take: 200,
+      take: 500,
     });
     const out: VendorRequest[] = [];
     for (const row of rows) {
       const payload = (row.payload || {}) as Record<string, unknown>;
-      const vt = String(payload.vendorType ?? payload.vendor_kind ?? payload.vendorKind ?? '')
-        .trim()
-        .toUpperCase();
-      const rowKind: VendorKind =
-        vt === 'SERVICE' || String(payload.vendorKind || '').toLowerCase() === 'service'
-          ? 'service'
-          : 'product';
+      const rowKind = resolveSignupVendorKind(payload);
       if (vendorKind && rowKind !== vendorKind) continue;
 
       const kc = String(payload.keycloakUserId ?? payload.keycloak_user_id ?? '').trim();
       const phone = String(payload.phone ?? '').trim();
       let linked = false;
       if (kc) {
-        linked = !!(await vendorRepo.findOne({ where: { keycloakUserId: kc } }));
+        linked = !!(await AppDataSource.getRepository(Vendor).findOne({ where: { keycloakUserId: kc } }));
       }
       if (!linked && phone) {
-        linked = !!(await vendorRepo.findOne({ where: { phone } }));
+        linked = !!(await this.findVendorByPhoneDigits(phone));
       }
       if (!linked) out.push(row);
     }

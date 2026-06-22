@@ -169,8 +169,19 @@ export function createVendorAdminRoutes(): Router {
     }
   };
 
+  const listPendingApplications = async (req: Request, res: Response) => {
+    try {
+      const vendorKind = parseVendorKindFilter(req);
+      const { items } = await svc.listPendingApplications(vendorKind);
+      res.json({ items, total: items.length });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  };
+
   r.get('/vendor-requests', listVendorRequests);
   r.get('/vendor-signup-pending', listPendingSignupsWithoutCatalog);
+  r.get('/vendor-pending-applications', listPendingApplications);
   r.patch('/vendor-requests/:id/approve', approveVendorRequest);
   r.delete('/vendor-requests/:id', deleteVendorRequest);
   r.get('/vendors_request', listVendorRequests);
