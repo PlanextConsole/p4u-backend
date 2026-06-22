@@ -45,8 +45,7 @@ export const createUploadRoutes = (): Router => {
     if (!file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const url = `${baseUrl}/uploads/${file.filename}`;
+    const url = `/uploads/${file.filename}`;
     res.status(201).json({ url, filename: file.filename, originalName: file.originalname, size: file.size });
   });
 
@@ -56,9 +55,8 @@ export const createUploadRoutes = (): Router => {
     if (!files || files.length === 0) {
       return res.status(400).json({ message: 'No files uploaded' });
     }
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const results = files.map((f) => ({
-      url: `${baseUrl}/uploads/${f.filename}`,
+      url: `/uploads/${f.filename}`,
       filename: f.filename,
       originalName: f.originalname,
       size: f.size,
