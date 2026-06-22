@@ -1,5 +1,6 @@
 import { AppDataSource } from '../config/database';
 import { Product } from '../entities/Product';
+import { countUnitsSoldByProduct } from './vendorOrderEnrichment';
 
 export interface MergedCategoryRow {
   id: string;
@@ -76,6 +77,12 @@ export class VendorCatalogService {
     qb.orderBy('p.createdAt', 'DESC').take(opts.limit).skip(opts.offset);
     const [items, total] = await qb.getManyAndCount();
     return { items, total };
+  }
+
+  async attachUnitsSold(vendorId: string, items: Product[]): Promise<(Product & { unitsSold: number })[]> {
+    const ids = items.map((p) => p.id);
+    const counts = await countUnitsSoldByProduct(vendorId, ids);
+    return items.map((p) => ({ ...p, unitsSold: counts[p.id] || 0 }));
   }
 
   async getProductForVendor(vendorId: string, productId: string): Promise<Product | null> {

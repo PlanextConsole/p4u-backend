@@ -388,6 +388,19 @@ export function createCommerceRoutes(): Router {
   );
 
   router.get(
+    '/bookings/vendor/:bookingId',
+    requireShopperRole,
+    requirePermission('booking.read.self'),
+    async (req: Request, res: Response) => {
+      const vendorId = vendorIdFromAuth(req);
+      if (!vendorId) return sendUnauthorized(res, 'vendor_id or sub required on token');
+      const row = await bookingSvc.getBookingForVendor(vendorId, req.params.bookingId);
+      if (!row) return sendNotFound(res, 'Booking not found');
+      sendSuccess(res, row);
+    }
+  );
+
+  router.get(
     '/bookings/admin',
     requireShopperRole,
     requirePermission('booking.read.self'),
@@ -439,20 +452,24 @@ export function createCommerceRoutes(): Router {
     requirePermission('booking.write.self'),
     async (req: Request, res: Response) => {
       const decision = String(req.body?.status || '').trim().toLowerCase();
-      if (decision !== 'approved' && decision !== 'rejected') {
-        return sendBadRequest(res, 'status must be approved or rejected');
+      const vendorStatuses = new Set(['approved', 'rejected', 'in_progress', 'completed', 'cancelled']);
+      if (!vendorStatuses.has(decision)) {
+        return sendBadRequest(res, 'status must be one of: approved, rejected, in_progress, completed, cancelled');
       }
 
       const auth = (req as any).auth;
       const roles = (auth?.realm_access?.roles || []).map((r: string) => String(r).toUpperCase());
       try {
         if (roles.includes('ADMIN')) {
+          if (decision !== 'approved' && decision !== 'rejected') {
+            return sendBadRequest(res, 'Admin can only set approved or rejected via this route');
+          }
           const row = await bookingSvc.reviewBookingForAdmin(req.params.bookingId, decision as 'approved' | 'rejected');
           return sendSuccess(res, row);
         }
         const vendorId = vendorIdFromAuth(req);
         if (!vendorId) return sendUnauthorized(res, 'vendor_id or sub required on token');
-        const row = await bookingSvc.reviewBookingForVendor(vendorId, req.params.bookingId, decision as 'approved' | 'rejected');
+        const row = await bookingSvc.updateBookingStatusForVendor(vendorId, req.params.bookingId, decision);
         return sendSuccess(res, row);
       } catch (e: any) {
         if (e.message === 'Booking not found') return sendNotFound(res, e.message);

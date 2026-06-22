@@ -7,6 +7,7 @@ import {
   buildSlotsForDate,
   mergeWithDefaults,
 } from './bookingAvailabilitySlots';
+import { enrichBookingForVendorPortal, enrichBookingsForVendorPortal } from './bookingEnrichment';
 
 const LEGACY_TIME_SLOTS = [
   { label: 'Morning 9-11 AM', value: '09:00-11:00' },
@@ -27,7 +28,7 @@ function extractDurationMinutesFromServiceMeta(meta: Record<string, unknown> | n
 export class BookingService {
   private repo = AppDataSource.getRepository(Booking);
   private readonly approvableStatuses = new Set(['pending']);
-  private readonly terminalStatuses = new Set(['cancelled', 'completed']);
+  private readonly terminalStatuses = new Set(['cancelled', 'completed', 'rejected']);
 
   private async slotMinutesForService(serviceId: string | null | undefined, fallback: number): Promise<number> {
     const sid = String(serviceId || '').trim();
@@ -113,7 +114,14 @@ export class BookingService {
       take: limit,
       skip: offset,
     });
-    return { items, total, limit, offset };
+    const enriched = await enrichBookingsForVendorPortal(items);
+    return { items: enriched, total, limit, offset };
+  }
+
+  async getBookingForVendor(vendorId: string, bookingId: string): Promise<Booking | null> {
+    const row = await this.repo.findOne({ where: { id: bookingId, vendorId } });
+    if (!row) return null;
+    return enrichBookingForVendorPortal(row);
   }
 
   async listAllBookings(limit: number, offset: number, filters?: { vendorId?: string; status?: string }) {
@@ -139,13 +147,43 @@ export class BookingService {
   }
 
   async reviewBookingForVendor(vendorId: string, bookingId: string, decision: 'approved' | 'rejected'): Promise<Booking> {
+    const row = await this.updateBookingStatusForVendor(vendorId, bookingId, decision);
+    return row;
+  }
+
+  async updateBookingStatusForVendor(vendorId: string, bookingId: string, nextStatus: string): Promise<Booking> {
+    const status = String(nextStatus || '').trim().toLowerCase();
+    const allowed = new Set(['approved', 'rejected', 'in_progress', 'completed', 'cancelled']);
+    if (!allowed.has(status)) throw new Error(`Invalid status: ${status}`);
+
     const row = await this.repo.findOne({ where: { id: bookingId, vendorId } });
     if (!row) throw new Error('Booking not found');
-    if (!this.approvableStatuses.has(row.status)) {
-      throw new Error(`Cannot ${decision} booking from status ${row.status}`);
+
+    const current = String(row.status || '').toLowerCase();
+    if (this.terminalStatuses.has(current)) {
+      throw new Error(`Cannot change booking from status ${current}`);
     }
-    row.status = decision;
-    return this.repo.save(row);
+
+    if (status === 'approved' || status === 'rejected') {
+      if (!this.approvableStatuses.has(current)) {
+        throw new Error(`Cannot ${status} booking from status ${current}`);
+      }
+    } else if (status === 'in_progress') {
+      if (current !== 'approved') throw new Error('Only approved bookings can move to in_progress');
+    } else if (status === 'completed') {
+      if (current !== 'approved' && current !== 'in_progress') {
+        throw new Error('Only approved or in_progress bookings can be completed');
+      }
+    } else if (status === 'cancelled') {
+      if (current === 'pending') throw new Error('Reject pending bookings instead of cancelling');
+      if (current !== 'approved' && current !== 'in_progress') {
+        throw new Error('Only approved or in_progress bookings can be cancelled');
+      }
+    }
+
+    row.status = status;
+    const saved = await this.repo.save(row);
+    return enrichBookingForVendorPortal(saved);
   }
 
   async reviewBookingForAdmin(bookingId: string, decision: 'approved' | 'rejected'): Promise<Booking> {

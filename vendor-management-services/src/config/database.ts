@@ -11,6 +11,8 @@ import { Settlement } from '../entities/Settlement';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { CatalogVendorService } from '../entities/CatalogVendorService';
 import { ServiceCategory } from '../entities/ServiceCategory';
+import { VendorMediaFolder } from '../entities/VendorMediaFolder';
+import { VendorMediaAsset } from '../entities/VendorMediaAsset';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -32,6 +34,8 @@ export const AppDataSource = new DataSource({
     CatalogServiceItem,
     CatalogVendorService,
     ServiceCategory,
+    VendorMediaFolder,
+    VendorMediaAsset,
   ],
   // Disable implicit DDL by default to avoid cross-service schema drift.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',

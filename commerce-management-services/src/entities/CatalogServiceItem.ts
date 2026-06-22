@@ -6,6 +6,9 @@ export class CatalogServiceItem {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  name!: string | null;
+
   @Column({ type: 'json', nullable: true })
   metadata!: Record<string, unknown> | null;
 }

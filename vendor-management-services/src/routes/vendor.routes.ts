@@ -16,7 +16,10 @@ import { CreateVendorServiceOfferingDto } from '../dto/create-vendor-service-off
 import { PatchVendorServiceOfferingDto } from '../dto/patch-vendor-service-offering.dto';
 import { VendorOfferedServicesService } from '../service/vendorOfferedServices.service';
 import { VendorBookingAvailabilityService } from '../service/vendorBookingAvailability.service';
+import { VendorMediaService } from '../service/vendorMedia.service';
 import { vendorImageUpload } from '../config/vendorImageUpload';
+import { createVendorMediaUpload, vendorMediaPublicUrl } from '../config/vendorMediaUpload';
+import { vendorDocumentUpload, vendorDocumentPublicUrl } from '../config/vendorDocumentUpload';
 
 const parsePaging = (req: Request) => {
   const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
@@ -46,6 +49,7 @@ export function createVendorRoutes(): Router {
   const catalogSvc = new VendorCatalogService();
   const offeredSvc = new VendorOfferedServicesService();
   const bookingAvailSvc = new VendorBookingAvailabilityService();
+  const mediaSvc = new VendorMediaService();
 
   router.get('/public/health', (_req: Request, res: Response) => {
     sendSuccess(res, {
@@ -574,7 +578,8 @@ export function createVendorRoutes(): Router {
           limit,
           offset,
         });
-        sendSuccess(res, { items, total, limit, offset });
+        const withSold = await catalogSvc.attachUnitsSold(vendorId, items);
+        sendSuccess(res, { items: withSold, total, limit, offset });
       } catch (e: any) {
         sendBadRequest(res, e?.message || 'Failed to list products');
       }
@@ -654,9 +659,169 @@ export function createVendorRoutes(): Router {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
       const { limit, offset } = parsePaging(req);
-      const data = await svc.listSettlementsForVendor(vendorId, limit, offset);
+      const q = req.query.q ? String(req.query.q) : undefined;
+      const status = req.query.status ? String(req.query.status) : undefined;
+      const from = req.query.from ? String(req.query.from) : undefined;
+      const to = req.query.to ? String(req.query.to) : undefined;
+      const data = await svc.listSettlementsForVendor(vendorId, limit, offset, { q, status, from, to });
       sendSuccess(res, data);
     }
+  );
+
+  router.get(
+    '/me/settlements/:settlementId',
+    requirePermission('vendor.portal.settlement.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const row = await svc.getSettlementForVendor(vendorId, req.params.settlementId);
+      if (!row) return sendNotFound(res, 'Settlement not found');
+      sendSuccess(res, row);
+    }
+  );
+
+  router.get(
+    '/me/rating-summary',
+    requirePermission('vendor.portal.review.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const data = await svc.getRatingSummaryForVendor(vendorId);
+      sendSuccess(res, data);
+    }
+  );
+
+  router.post(
+    '/me/documents/upload',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response, next) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      (req as any).vendorUploadId = vendorId;
+      vendorDocumentUpload.single('file')(req, res, (err: unknown) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') return sendBadRequest(res, 'File too large (max 12 MB)');
+          return sendBadRequest(res, err.message);
+        }
+        if (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return sendBadRequest(res, msg);
+        }
+        next();
+      });
+    },
+    (req: Request, res: Response) => {
+      const vendorId = String((req as any).vendorUploadId || '');
+      const file = req.file;
+      if (!file || !vendorId) return sendBadRequest(res, 'No file uploaded');
+      const url = vendorDocumentPublicUrl(vendorId, file.filename);
+      sendCreated(res, { url, mimeType: file.mimetype, size: file.size, originalName: file.originalname });
+    },
+  );
+
+  // ─── Vendor media library ───
+  router.get(
+    '/me/media/folders',
+    requirePermission('vendor.portal.me.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const data = await mediaSvc.listFolders(vendorId);
+      sendSuccess(res, data);
+    },
+  );
+
+  router.post(
+    '/me/media/folders',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      try {
+        const row = await mediaSvc.createFolder(vendorId, String(req.body?.name || ''));
+        sendCreated(res, row);
+      } catch (e: any) {
+        sendBadRequest(res, e?.message || 'Create folder failed');
+      }
+    },
+  );
+
+  router.get(
+    '/me/media/folders/:folderId/assets',
+    requirePermission('vendor.portal.me.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      try {
+        const data = await mediaSvc.listFolderAssets(vendorId, req.params.folderId);
+        sendSuccess(res, data);
+      } catch (e: any) {
+        if (e.message === 'Folder not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e?.message || 'Failed to list assets');
+      }
+    },
+  );
+
+  router.get(
+    '/me/media/assets',
+    requirePermission('vendor.portal.me.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const { limit, offset } = parsePaging(req);
+      const q = req.query.q ? String(req.query.q) : undefined;
+      const typeRaw = String(req.query.type || 'all').toLowerCase();
+      const type = typeRaw === 'images' || typeRaw === 'documents' ? typeRaw : 'all';
+      const data = await mediaSvc.searchAssets(vendorId, { q, type, limit, offset });
+      sendSuccess(res, data);
+    },
+  );
+
+  router.post(
+    '/me/media/folders/:folderId/upload',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const folderId = req.params.folderId;
+      const upload = createVendorMediaUpload(vendorId, folderId);
+      upload.single('file')(req, res, async (err: unknown) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') return sendBadRequest(res, 'File too large (max 12 MB)');
+          return sendBadRequest(res, err.message);
+        }
+        if (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return sendBadRequest(res, msg);
+        }
+        const file = req.file;
+        if (!file) return sendBadRequest(res, 'No file uploaded');
+        try {
+          const url = vendorMediaPublicUrl(vendorId, folderId, file.filename);
+          const row = await mediaSvc.createAssetFromUpload(vendorId, folderId, file, url);
+          sendCreated(res, row);
+        } catch (e: any) {
+          if (e.message === 'Folder not found') return sendNotFound(res, e.message);
+          sendBadRequest(res, e?.message || 'Upload failed');
+        }
+      });
+    },
+  );
+
+  router.delete(
+    '/me/media/assets/:assetId',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      try {
+        await mediaSvc.deleteAsset(vendorId, req.params.assetId);
+        sendSuccess(res, { ok: true });
+      } catch (e: any) {
+        if (e.message === 'Asset not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e?.message || 'Delete failed');
+      }
+    },
   );
 
   // ─── Per-vendor category commission override ───

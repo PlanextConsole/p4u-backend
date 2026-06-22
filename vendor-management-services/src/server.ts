@@ -8,6 +8,7 @@ import { AppDataSource } from './config/database';
 import { ensureVendorUploadDir, vendorUploadRoot } from './config/vendorImageUpload';
 import { repairVendorCatalogModerationSchema } from './config/repairVendorCatalogModeration';
 import { repairVendorBookingAvailabilitySchema } from './config/repairVendorBookingAvailability';
+import { repairVendorMediaSchema } from './config/repairVendorMediaSchema';
 
 dotenv.config();
 
@@ -51,6 +52,7 @@ async function startServer() {
   try {
     await repairVendorCatalogModerationSchema();
     await repairVendorBookingAvailabilitySchema();
+    await repairVendorMediaSchema();
     await AppDataSource.initialize();
     console.log('Vendor portal DB connected');
 
