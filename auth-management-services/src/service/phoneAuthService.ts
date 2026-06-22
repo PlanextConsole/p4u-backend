@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import axios, { AxiosResponse } from 'axios';
 import { verifyPhoneIdToken } from '../config/firebaseAdmin';
+import { ensureKeycloakAdminAuth } from '../config/keycloakAdmin';
 import { CustomerProfileRepository } from '../repository/customerProfileRepository';
 import { CustomerProfile } from '../entity/CustomerProfile';
 import { CatalogVendorRepository } from '../repository/catalogVendorRepository';
@@ -147,6 +148,10 @@ export class PhoneAuthService {
   private clientId: string;
   private clientSecret: string;
 
+  private async ensureKcAdmin(): Promise<void> {
+    await ensureKeycloakAdminAuth(this.keycloakAdmin);
+  }
+
   constructor(keycloakAdmin: KcAdminClient) {
     this.keycloakAdmin = keycloakAdmin;
     this.customerProfileRepo = new CustomerProfileRepository();
@@ -174,6 +179,7 @@ export class PhoneAuthService {
     firebaseIdToken: string,
     intendedRole: 'CUSTOMER' | 'VENDOR',
   ): Promise<PhoneExchangeResult> {
+    await this.ensureKcAdmin();
     const claims = await verifyPhoneIdToken(firebaseIdToken);
     const phone = claims.phoneNumber; // E.164
 
@@ -220,6 +226,7 @@ export class PhoneAuthService {
    * tokens.
    */
   async registerCustomer(payload: CustomerRegistrationPayload): Promise<AuthResponse> {
+    await this.ensureKcAdmin();
     const decoded = this.verifyRegistrationToken(payload.registrationToken);
     if (decoded.role !== 'CUSTOMER') {
       throw new Error('Registration token role mismatch');
@@ -478,6 +485,7 @@ export class PhoneAuthService {
    * audit row, then mints Keycloak tokens.
    */
   async registerVendor(payload: VendorRegistrationPayload): Promise<AuthResponse> {
+    await this.ensureKcAdmin();
     if (!payload.firebaseIdToken) {
       throw new Error('Firebase ID token is required to register a vendor');
     }
@@ -692,6 +700,7 @@ export class PhoneAuthService {
    * invalidated. That's intentional — these accounts are OTP-only.
    */
   private async loginAsKeycloakUser(keycloakUserId: string): Promise<AuthResponse> {
+    await this.ensureKcAdmin();
     const user = await this.keycloakAdmin.users.findOne({ id: keycloakUserId });
     if (!user || !user.username) {
       throw new Error('Keycloak user not found while issuing tokens');

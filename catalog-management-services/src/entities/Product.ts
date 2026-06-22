@@ -75,6 +75,10 @@ export class Product {
   @Index()
   isActive!: boolean;
 
+  @Column({ name: 'moderation_status', type: 'varchar', length: 32, default: 'approved' })
+  @Index()
+  moderationStatus!: string;
+
   @Column({ type: 'json', nullable: true })
   metadata!: Record<string, unknown> | null;
 

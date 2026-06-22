@@ -80,6 +80,7 @@ export class GatewayMiddleware {
           },
           onError: (err, req, res) => {
             console.error(`Proxy error for ${serviceName}:`, err.message);
+            this.discoveryClient.invalidateService(serviceName);
             if (!res.headersSent) {
               res.status(502).json({
                 error: 'Bad Gateway',

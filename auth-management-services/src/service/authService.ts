@@ -1,5 +1,6 @@
 import KcAdminClient from '@keycloak/keycloak-admin-client';
 import axios, { AxiosResponse } from 'axios';
+import { ensureKeycloakAdminAuth } from '../config/keycloakAdmin';
 import { AuthConstants } from '../constants/authConstants';
 import { AuthResponse } from '../dto/AuthResponse';
 import { LoginRequest } from '../dto/LoginRequest';
@@ -77,6 +78,8 @@ export class AuthService {
     if (!AuthConstants.isValidUserType(userType)) {
       throw new Error(`Invalid user type. Valid types: ${AuthConstants.VALID_USER_TYPES.join(', ')}`);
     }
+
+    await ensureKeycloakAdminAuth(this.keycloakAdmin);
 
     const existingUserByUsername = await this.userRepository.findByUsername(request.username);
     if (existingUserByUsername) {

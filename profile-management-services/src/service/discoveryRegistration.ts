@@ -25,25 +25,32 @@ export class DiscoveryRegistration {
     });
   }
 
-  async register(registration: ServiceRegistrationRequest): Promise<string> {
-    try {
-      const response = await this.httpClient.post(`/eureka/apps/${registration.serviceName}`, {
-        host: registration.host,
-        port: registration.port,
-        healthCheckUrl: registration.healthCheckUrl,
-        metadata: registration.metadata || {},
-      });
+  async register(registration: ServiceRegistrationRequest, maxAttempts = 12): Promise<string> {
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-      if (response.data && response.data.instance && response.data.instance.instanceId) {
-        this.registeredInstanceId = response.data.instance.instanceId;
-        this.serviceName = registration.serviceName;
-        this.startHeartbeat();
-        return this.registeredInstanceId as string;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await this.httpClient.post(`/eureka/apps/${registration.serviceName}`, {
+          host: registration.host,
+          port: registration.port,
+          healthCheckUrl: registration.healthCheckUrl,
+          metadata: registration.metadata || {},
+        });
+
+        if (response.data?.instance?.instanceId) {
+          this.registeredInstanceId = response.data.instance.instanceId;
+          this.serviceName = registration.serviceName;
+          this.startHeartbeat();
+          return this.registeredInstanceId as string;
+        }
+
+        throw new Error('Invalid response from discovery service');
+      } catch {
+        if (attempt === maxAttempts) return '';
+        await delay(Math.min(1000 * attempt, 10000));
       }
-      throw new Error('Invalid response from discovery service');
-    } catch {
-      return '';
     }
+    return '';
   }
 
   async deregister(): Promise<void> {

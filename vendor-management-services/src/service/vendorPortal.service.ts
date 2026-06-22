@@ -14,13 +14,14 @@ import { UpdateVendorOrganizationOrderDto } from '../dto/update-organization-ord
 
 export class VendorPortalService {
   async resolveVendorId(auth: any): Promise<string | null> {
-    const claim = auth?.vendor_id;
-    if (claim) return String(claim);
     const sub = auth?.sub ? String(auth.sub) : '';
-    if (!sub) return null;
-    const repo = AppDataSource.getRepository(Vendor);
-    const v = await repo.findOne({ where: { keycloakUserId: sub } });
-    return v?.id ?? null;
+    if (sub) {
+      const repo = AppDataSource.getRepository(Vendor);
+      const v = await repo.findOne({ where: { keycloakUserId: sub } });
+      if (v?.id) return v.id;
+    }
+    const claim = auth?.vendor_id;
+    return claim ? String(claim) : null;
   }
 
   async getVendorById(vendorId: string): Promise<Vendor | null> {

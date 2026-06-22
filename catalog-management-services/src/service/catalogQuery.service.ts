@@ -1,4 +1,4 @@
-import { In } from 'typeorm';
+import { In, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { ProductCategory } from '../entities/ProductCategory';
 import { ProductSubcategory } from '../entities/ProductSubcategory';
@@ -29,6 +29,14 @@ export type PublicCategory = {
 };
 
 export class CatalogQueryService {
+  /** Filters applied to customer-facing product listings (shop, search, vendor pages). */
+  private applyPublicProductFilters(qb: SelectQueryBuilder<Product>, includeInactive: boolean) {
+    if (includeInactive) return;
+    qb.innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' });
+    qb.andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' });
+    qb.andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true });
+  }
+
   /** Product browse: root category id + all its product subcategory ids. */
   private async collectProductBrowseIds(rootProductCategoryId: string): Promise<string[]> {
     const subRepo = AppDataSource.getRepository(ProductSubcategory);
@@ -127,7 +135,7 @@ export class CatalogQueryService {
       .offset(paging.offset);
 
     if (vendorId) qb.andWhere('p.vendorId = :vendorId', { vendorId });
-    if (!includeInactive) qb.andWhere('p.isActive = :active', { active: true });
+    this.applyPublicProductFilters(qb, includeInactive);
 
     const [items, total] = await qb.getManyAndCount();
     return { items, total };
@@ -135,8 +143,15 @@ export class CatalogQueryService {
 
   async getProduct(id: string, includeInactive: boolean) {
     const repo = AppDataSource.getRepository(Product);
-    const where = includeInactive ? { id } : { id, isActive: true };
-    return repo.findOne({ where });
+    if (includeInactive) return repo.findOne({ where: { id } });
+    const row = await repo
+      .createQueryBuilder('p')
+      .innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' })
+      .where('p.id = :id', { id })
+      .andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' })
+      .andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true })
+      .getOne();
+    return row;
   }
 
   async listProductsForBrowse(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {
@@ -148,7 +163,7 @@ export class CatalogQueryService {
       .limit(paging.limit)
       .offset(paging.offset);
 
-    if (!includeInactive) qb.andWhere('p.isActive = :active', { active: true });
+    this.applyPublicProductFilters(qb, includeInactive);
 
     const sub = filters?.subcategoryId?.trim();
     const cat = filters?.categoryId?.trim();
@@ -318,7 +333,7 @@ export class CatalogQueryService {
       .where('p.name LIKE :like OR p.description LIKE :like', { like })
       .orderBy('p.updatedAt', 'DESC')
       .limit(paging.limit);
-    if (!includeInactive) productsQb.andWhere('p.isActive = :active', { active: true });
+    this.applyPublicProductFilters(productsQb, includeInactive);
     const products = await productsQb.getMany();
     items.push(...products.map((p) => ({ type: 'product', ...p })));
 

@@ -189,7 +189,9 @@ export const createAuthRoutes = (
         });
         return res.status(201).json(auth);
       } catch (error: any) {
-        return res.status(400).json({ message: mapCaughtErrorToMessage(error) });
+        const message = mapCaughtErrorToMessage(error);
+        const status = statusForPhoneExchangeFailure(message);
+        return res.status(status).json({ message });
       }
     },
   );
@@ -234,10 +236,17 @@ export const createAuthRoutes = (
 
   router.post('/public/refresh', publicRefreshLimiter, async (req: Request, res: Response) => {
     try {
-      const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : '';
+      const refreshToken =
+        typeof req.body?.refreshToken === 'string'
+          ? req.body.refreshToken
+          : typeof req.query.refreshToken === 'string'
+            ? req.query.refreshToken
+            : '';
 
       if (!refreshToken) {
-        return res.status(400).json({ message: 'Refresh token is required in request body' });
+        return res.status(400).json({
+          message: 'Refresh token is required (body.refreshToken or query.refreshToken)',
+        });
       }
 
       const response = await authService.refreshToken(refreshToken);

@@ -22,25 +22,31 @@ export class DiscoveryRegistration {
     this.httpClient = axios.create({ baseURL: this.discoveryUrl, timeout: 5000 });
   }
 
-  async register(registration: ServiceRegistrationRequest): Promise<string> {
-    try {
-      const response = await this.httpClient.post(`/eureka/apps/${registration.serviceName}`, {
-        host: registration.host,
-        port: registration.port,
-        healthCheckUrl: registration.healthCheckUrl,
-        metadata: registration.metadata || {},
-      });
-      const instanceId: string | undefined = response.data?.instance?.instanceId;
-      if (instanceId) {
-        this.registeredInstanceId = instanceId;
-        this.serviceName = registration.serviceName;
-        this.startHeartbeat();
-        return instanceId;
+  async register(registration: ServiceRegistrationRequest, maxAttempts = 12): Promise<string> {
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await this.httpClient.post(`/eureka/apps/${registration.serviceName}`, {
+          host: registration.host,
+          port: registration.port,
+          healthCheckUrl: registration.healthCheckUrl,
+          metadata: registration.metadata || {},
+        });
+        const instanceId: string | undefined = response.data?.instance?.instanceId;
+        if (instanceId) {
+          this.registeredInstanceId = instanceId;
+          this.serviceName = registration.serviceName;
+          this.startHeartbeat();
+          return instanceId;
+        }
+        throw new Error('Invalid response from discovery service');
+      } catch {
+        if (attempt === maxAttempts) return '';
+        await delay(Math.min(1000 * attempt, 10000));
       }
-      throw new Error('Invalid response from discovery service');
-    } catch {
-      return '';
     }
+    return '';
   }
 
   async deregister(): Promise<void> {

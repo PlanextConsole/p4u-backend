@@ -1,18 +1,53 @@
-﻿**/node_modules/
+# Dependencies (all packages)
+**/node_modules/
+
+# Build outputs
 **/dist/
 **/dist-ssr/
 **/build/
 **/.next/
 **/out/
+
+# Env & secrets — commit only *.example
 **/.env
 **/.env.local
 **/.env.*.local
+**/.env.development.local
+**/.env.production.local
+# Keep examples trackable
+!**/.env.example
+
+# Uploads & runtime media (admin/vendor local disk)
 **/uploads/
+admin-management-services/uploads/
+
+# Logs & debug
+**/logs/
 **/*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Test / coverage
+**/coverage/
+**/.nyc_output/
+**/*.lcov
+
+# Tooling cache
 **/.vite/
 **/.eslintcache
 **/*.tsbuildinfo
-**/.claude/
-*.md
+.turbo/
+
+# IDE / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Cursor / local agent (optional)
+.claude/

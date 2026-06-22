@@ -8,12 +8,15 @@ export class DiscoveryClient {
   private discoveryUrl: string;
   private httpClient: AxiosInstance;
   private serviceCache: Map<string, ServiceInstance[]> = new Map();
+  private cacheTimestamps: Map<string, number> = new Map();
   private refreshInterval: number;
+  private cacheMaxAgeMs: number;
   private refreshTimer?: NodeJS.Timeout;
 
-  constructor(discoveryUrl?: string, refreshInterval: number = 30000) {
+  constructor(discoveryUrl?: string, refreshInterval: number = 30000, cacheMaxAgeMs: number = 10000) {
     this.discoveryUrl = discoveryUrl || process.env.DISCOVERY_SERVICE_URL || 'http://localhost:8761';
     this.refreshInterval = refreshInterval;
+    this.cacheMaxAgeMs = cacheMaxAgeMs;
     this.httpClient = axios.create({
       baseURL: this.discoveryUrl,
       timeout: 5000,
@@ -24,11 +27,22 @@ export class DiscoveryClient {
   }
 
   /**
+   * Invalidate cached instances for a service (e.g. after proxy 502).
+   */
+  invalidateService(serviceName: string): void {
+    this.serviceCache.delete(serviceName);
+    this.cacheTimestamps.delete(serviceName);
+  }
+
+  /**
    * Get all instances of a service
    */
-  async getServiceInstances(serviceName: string): Promise<ServiceInstance[]> {
-    // Check cache first
-    if (this.serviceCache.has(serviceName)) {
+  async getServiceInstances(serviceName: string, forceRefresh = false): Promise<ServiceInstance[]> {
+    const cacheAge = Date.now() - (this.cacheTimestamps.get(serviceName) ?? 0);
+    const cacheFresh = !forceRefresh && cacheAge < this.cacheMaxAgeMs;
+
+    // Check cache first (only if fresh)
+    if (cacheFresh && this.serviceCache.has(serviceName)) {
       const cached = this.serviceCache.get(serviceName)!;
       const upInstances = cached.filter(inst => inst.status === 'UP');
       if (upInstances.length > 0) {
@@ -49,6 +63,7 @@ export class DiscoveryClient {
       if (response.data && response.data.application) {
         const instances = response.data.application.instance || [];
         this.serviceCache.set(serviceName, instances);
+        this.cacheTimestamps.set(serviceName, Date.now());
         const upInstances = instances.filter(inst => inst.status === 'UP');
         console.log(`Found ${upInstances.length} UP instance(s) for ${serviceName}`);
         return upInstances;
@@ -109,10 +124,12 @@ export class DiscoveryClient {
       
       if (response.data && response.data.applications) {
         this.serviceCache.clear();
+        this.cacheTimestamps.clear();
         
         response.data.applications.application.forEach(app => {
           const instances = app.instance || [];
           this.serviceCache.set(app.name, instances);
+          this.cacheTimestamps.set(app.name, Date.now());
           const upCount = instances.filter(inst => inst.status === 'UP').length;
           console.log(`  - ${app.name}: ${upCount}/${instances.length} instance(s) UP`);
         });

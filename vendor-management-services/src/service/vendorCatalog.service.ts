@@ -59,7 +59,7 @@ export class VendorCatalogService {
     opts: { q?: string; status?: string; moderation?: string; limit: number; offset: number },
   ): Promise<{ items: Product[]; total: number }> {
     const repo = AppDataSource.getRepository(Product);
-    const qb = repo.createQueryBuilder('p').where('p.vendor_id = :vendorId', { vendorId });
+    const qb = repo.createQueryBuilder('p').where('p.vendorId = :vendorId', { vendorId });
     const q = (opts.q || '').trim();
     if (q) {
       qb.andWhere('p.name LIKE :q', { q: `%${q}%` });
@@ -71,9 +71,9 @@ export class VendorCatalogService {
       qb.andWhere('(p.moderationStatus = :ap OR p.moderationStatus IS NULL)', { ap: 'approved' });
     }
     const st = (opts.status || 'all').toLowerCase();
-    if (st === 'active') qb.andWhere('p.is_active = 1');
-    else if (st === 'inactive') qb.andWhere('p.is_active = 0');
-    qb.orderBy('p.created_at', 'DESC').take(opts.limit).skip(opts.offset);
+    if (st === 'active') qb.andWhere('p.isActive = :active', { active: true });
+    else if (st === 'inactive') qb.andWhere('p.isActive = :inactive', { inactive: false });
+    qb.orderBy('p.createdAt', 'DESC').take(opts.limit).skip(opts.offset);
     const [items, total] = await qb.getManyAndCount();
     return { items, total };
   }
@@ -150,7 +150,10 @@ export class VendorCatalogService {
     }
     if (body.description !== undefined) row.description = strOrNull(body.description);
     if (body.price !== undefined) row.price = toPriceString(body.price, row.price);
-    if (!pending && body.isActive !== undefined) row.isActive = Boolean(body.isActive);
+    if (!pending && body.isActive !== undefined) {
+      row.isActive = Boolean(body.isActive);
+      row.availability = row.isActive;
+    }
     if (body.metadata !== undefined) row.metadata = metaObj(body.metadata);
     return repo.save(row);
   }
