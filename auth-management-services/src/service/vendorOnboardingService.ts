@@ -124,13 +124,14 @@ export class VendorOnboardingService {
     try {
       await this.upsertCatalogVendor(ctx, payload, vendorType, user?.email ?? null);
     } catch (err: any) {
-      // Don't fail the user-facing request just because the mirror write
-      // hiccuped — they will still see their pending profile via the audit
-      // row, and we surface the error in logs so ops can investigate.
-      console.warn(
+      const msg = err?.message ?? String(err);
+      console.error(
         '[auth-service] catalog_vendors mirror write failed for keycloakUserId=%s: %s',
         ctx.keycloakUserId,
-        err?.message ?? err,
+        msg,
+      );
+      throw new Error(
+        `Could not save vendor profile for admin review. Please try again or contact support. (${msg})`,
       );
     }
 

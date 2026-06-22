@@ -23,21 +23,61 @@ export class VendorAdminService {
     if (opts?.status) {
       qb.andWhere('vendor.status = :status', { status: opts.status });
     }
-    if (opts?.vendorKind) {
-      if (opts.vendorKind === 'service') {
-        qb.andWhere(
-          '(LOWER(TRIM(COALESCE(vendor.vendorKind, :empty))) = :serviceKind OR UPPER(TRIM(COALESCE(vendor.vendorType, :emptyUpper))) = :serviceType)',
-          { serviceKind: 'service', serviceType: 'SERVICE', empty: '', emptyUpper: '' }
-        );
-      } else {
-        qb.andWhere(
-          '(LOWER(TRIM(COALESCE(vendor.vendorKind, :empty))) = :productKind OR UPPER(TRIM(COALESCE(vendor.vendorType, :emptyUpper))) = :productType)',
-          { productKind: 'product', productType: 'PRODUCT', empty: '', emptyUpper: '' }
-        );
-      }
+    if (opts?.vendorKind === 'service') {
+      qb.andWhere(
+        `(LOWER(TRIM(COALESCE(vendor.vendorKind, ''))) = :serviceKind OR UPPER(TRIM(COALESCE(vendor.vendorType, ''))) = :serviceType)`,
+        { serviceKind: 'service', serviceType: 'SERVICE' },
+      );
+    } else if (opts?.vendorKind === 'product') {
+      // Product list includes legacy rows with empty kind/type (defaults to product).
+      qb.andWhere(
+        `NOT (
+          LOWER(TRIM(COALESCE(vendor.vendorKind, ''))) = :serviceKind
+          OR UPPER(TRIM(COALESCE(vendor.vendorType, ''))) = :serviceType
+        )`,
+        { serviceKind: 'service', serviceType: 'SERVICE' },
+      );
     }
     const [items, total] = await qb.getManyAndCount();
     return { items, total };
+  }
+
+  /**
+   * Pending vendor_signup_requests with no matching catalog_vendors row yet
+   * (registration succeeded in auth but catalog mirror failed, or legacy flow).
+   */
+  async listPendingSignupsWithoutCatalog(vendorKind?: VendorKind): Promise<VendorRequest[]> {
+    const reqRepo = AppDataSource.getRepository(VendorRequest);
+    const vendorRepo = AppDataSource.getRepository(Vendor);
+    const rows = await reqRepo.find({
+      where: { status: 'pending' },
+      order: { createdAt: 'DESC' },
+      take: 200,
+    });
+    const out: VendorRequest[] = [];
+    for (const row of rows) {
+      const payload = (row.payload || {}) as Record<string, unknown>;
+      const vt = String(payload.vendorType ?? payload.vendor_kind ?? payload.vendorKind ?? '')
+        .trim()
+        .toUpperCase();
+      const rowKind: VendorKind =
+        vt === 'SERVICE' || String(payload.vendorKind || '').toLowerCase() === 'service'
+          ? 'service'
+          : 'product';
+      if (vendorKind && rowKind !== vendorKind) continue;
+
+      const kc = String(payload.keycloakUserId ?? payload.keycloak_user_id ?? '').trim();
+      const phone = String(payload.phone ?? '').trim();
+      let linked = false;
+      if (kc) {
+        linked = !!(await vendorRepo.findOne({ where: { keycloakUserId: kc } }));
+      }
+      if (!linked && phone) {
+        linked = !!(await vendorRepo.findOne({ where: { phone } }));
+      }
+      if (!linked) out.push(row);
+    }
+    return out;
   }
 
   async getVendor(id: string): Promise<Vendor | null> {
@@ -219,6 +259,27 @@ export class VendorAdminService {
       }
 
       const payload = (request.payload || {}) as Record<string, unknown>;
+      const keycloakRaw = payload.keycloakUserId ?? payload.keycloak_user_id;
+      const kcId = keycloakRaw != null && String(keycloakRaw).trim() !== '' ? String(keycloakRaw).trim() : null;
+      if (kcId) {
+        const existing = await vendorRepo.findOne({ where: { keycloakUserId: kcId } });
+        if (existing) {
+          existing.status = 'active';
+          existing.kycStatus = existing.kycStatus || 'submitted';
+          await vendorRepo.save(existing);
+          request.status = 'approved';
+          await reqRepo.save(request);
+          await this.audit.log({
+            actorSub,
+            action: 'APPROVE',
+            entityType: 'VendorRequest',
+            entityId: request.id,
+            metadata: { vendorId: existing.id, linkedExisting: true },
+            ipAddress: ip ?? null,
+          });
+          return { vendor: existing, request };
+        }
+      }
       const businessName = String(dto.businessName || payload.businessName || '').trim();
       const ownerName = String(dto.ownerName || payload.ownerName || '').trim();
       if (!businessName || !ownerName) {
@@ -227,7 +288,7 @@ export class VendorAdminService {
 
       const emailRaw = dto.email ?? payload.email;
       const phoneRaw = dto.phone ?? payload.phone;
-      const keycloakRaw = dto.keycloakUserId ?? payload.keycloakUserId ?? payload.keycloak_user_id;
+      const keycloakForCreate = dto.keycloakUserId ?? payload.keycloakUserId ?? payload.keycloak_user_id;
 
       const vt = String(payload.vendorType ?? payload.vendor_type ?? '').trim().toUpperCase();
       const kindRaw =
@@ -248,7 +309,7 @@ export class VendorAdminService {
         categoriesJson: payload.categoriesJson ?? payload.categories ?? null,
         addressJson: (payload.addressJson as Record<string, unknown> | null) ?? (payload.address as Record<string, unknown> | null) ?? null,
         notes: dto.notes != null ? String(dto.notes) : null,
-        keycloakUserId: keycloakRaw != null && String(keycloakRaw).trim() !== '' ? String(keycloakRaw).trim() : null,
+        keycloakUserId: keycloakForCreate != null && String(keycloakForCreate).trim() !== '' ? String(keycloakForCreate).trim() : null,
         vendorKind: approvedKind,
         vendorType: approvedKind === 'service' ? 'SERVICE' : 'PRODUCT',
       });

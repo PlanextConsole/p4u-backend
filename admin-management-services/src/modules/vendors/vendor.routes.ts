@@ -150,7 +150,27 @@ export function createVendorAdminRoutes(): Router {
     }
   };
 
+  const listPendingSignupsWithoutCatalog = async (req: Request, res: Response) => {
+    try {
+      const vendorKind = parseVendorKindFilter(req);
+      const items = await svc.listPendingSignupsWithoutCatalog(vendorKind);
+      res.json({
+        items: items.map((row) => ({
+          id: row.id,
+          status: row.status,
+          requestType: row.requestType,
+          createdAt: row.createdAt,
+          payload: row.payload,
+        })),
+        total: items.length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  };
+
   r.get('/vendor-requests', listVendorRequests);
+  r.get('/vendor-signup-pending', listPendingSignupsWithoutCatalog);
   r.patch('/vendor-requests/:id/approve', approveVendorRequest);
   r.delete('/vendor-requests/:id', deleteVendorRequest);
   r.get('/vendors_request', listVendorRequests);
