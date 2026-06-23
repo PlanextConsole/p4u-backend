@@ -6,8 +6,9 @@ import { randomUUID } from 'crypto';
 import { jwtAuth, requireRole, requirePermission } from '../../middleware/authMiddleware';
 import { getAuthSub, clientIp, parseLimitOffset } from '../../http/adminHttp';
 import { FileUploadsAdminService } from './file-uploads.service';
+import { adminUploadRoot } from '../../config/uploadPaths';
 
-const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
+const UPLOAD_DIR = adminUploadRoot();
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {

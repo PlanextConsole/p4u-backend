@@ -14,8 +14,10 @@ import { UpdateCustomerDto } from '../customers/dto/update-customer.dto';
 import { CreateVendorDto } from '../vendors/dto/create-vendor.dto';
 import { UpdateVendorDto } from '../vendors/dto/update-vendor.dto';
 import { AdminBulkUploadJob, type BulkUploadRowError } from './entities/AdminBulkUploadJob';
+import { normalizeMediaUrl, normalizeMediaUrlList } from '../../util/normalizeMediaUrl';
+import { adminUploadRoot } from '../../config/uploadPaths';
 
-const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
+const UPLOAD_DIR = adminUploadRoot();
 const MAX_ROWS = 500;
 const MAX_ERRORS_STORED = 100;
 
@@ -218,8 +220,9 @@ export class FileUploadsAdminService {
     const urls = (pick(r, 'image_urls', 'images', 'gallery_urls') || '')
       .split('|')
       .map(s => s.trim())
-      .filter(Boolean);
-    const explicitThumb = pick(r, 'thumbnail_url', 'thumb');
+      .filter(Boolean)
+      .map((u) => normalizeMediaUrl(u) ?? u);
+    const explicitThumb = normalizeMediaUrl(pick(r, 'thumbnail_url', 'thumb') || null);
     const thumbnailUrl = explicitThumb || urls[0] || undefined;
     const bannerUrls =
       urls.length === 0

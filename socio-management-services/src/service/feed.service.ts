@@ -1,8 +1,8 @@
-import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { SocialPost } from '../entities/SocialPost';
 import { UserFollow } from '../entities/UserFollow';
-import { SocialMedia } from '../entities/SocialMedia';
+import { deleteMediaByIds } from '../service/socialMediaStorage.service';
+import { normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
 
 /**
  * Extracts media ids from a `/socio-uploads/media/{id}` URL. Returns null for
@@ -12,6 +12,11 @@ function mediaIdFromUrl(url: string | null | undefined): string | null {
   if (!url || typeof url !== 'string') return null;
   const match = url.match(/\/socio-uploads\/media\/([a-zA-Z0-9-]+)/);
   return match ? match[1] : null;
+}
+
+function withNormalizedMedia<T extends { mediaUrls?: string[] | null }>(post: T): T {
+  if (!post.mediaUrls?.length) return post;
+  return { ...post, mediaUrls: normalizeMediaUrlList(post.mediaUrls) };
 }
 
 export class FeedService {
@@ -37,7 +42,7 @@ export class FeedService {
         authorId,
         authorType,
         contentText: data.contentText || null,
-        mediaUrls: data.mediaUrls || null,
+        mediaUrls: normalizeMediaUrlList(data.mediaUrls || null),
         postType: data.postType || 'text',
         visibility: data.visibility || 'public',
         status: 'published',
@@ -96,7 +101,8 @@ export class FeedService {
   }
 
   async getPost(postId: string) {
-    return AppDataSource.getRepository(SocialPost).findOne({ where: { id: postId } });
+    const row = await AppDataSource.getRepository(SocialPost).findOne({ where: { id: postId } });
+    return row ? withNormalizedMedia(row) : null;
   }
 
   async getFeed(userId: string, limit: number, offset: number) {
@@ -116,25 +122,28 @@ export class FeedService {
       .orderBy('p.created_at', 'DESC')
       .skip(offset)
       .take(limit)
-      .getMany();
+      .getMany()
+      .then((rows) => rows.map(withNormalizedMedia));
   }
 
   async getPublicFeed(limit: number, offset: number) {
-    return AppDataSource.getRepository(SocialPost).find({
+    const rows = await AppDataSource.getRepository(SocialPost).find({
       where: { status: 'published', visibility: 'public' },
       order: { createdAt: 'DESC' },
       skip: offset,
       take: limit,
     });
+    return rows.map(withNormalizedMedia);
   }
 
   async getUserPosts(userId: string, limit: number, offset: number) {
-    return AppDataSource.getRepository(SocialPost).find({
+    const rows = await AppDataSource.getRepository(SocialPost).find({
       where: { authorId: userId },
       order: { createdAt: 'DESC' },
       skip: offset,
       take: limit,
     });
+    return rows.map(withNormalizedMedia);
   }
 
   async deletePost(authorId: string, postId: string) {
@@ -150,7 +159,7 @@ export class FeedService {
         .map(mediaIdFromUrl)
         .filter((v): v is string => v != null);
       if (mediaIds.length > 0) {
-        await manager.getRepository(SocialMedia).delete({ id: In(mediaIds) });
+        await deleteMediaByIds(mediaIds);
       }
 
       post.status = 'deleted';

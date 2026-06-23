@@ -1,14 +1,11 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
 import { jwtAuth, requireRole } from '../../middleware/authMiddleware';
+import { adminUploadRoot, ensureAdminUploadDir } from '../../config/uploadPaths';
 
-const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
-
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+ensureAdminUploadDir();
+const UPLOAD_DIR = adminUploadRoot();
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),

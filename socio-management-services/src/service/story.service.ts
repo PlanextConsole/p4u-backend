@@ -1,10 +1,10 @@
-import { In, MoreThan } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Story } from '../entities/Story';
 import { UserFollow } from '../entities/UserFollow';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { CustomerProfile } from '../entities/CustomerProfile';
-import { SocialMedia } from '../entities/SocialMedia';
+import { deleteMediaByIds } from '../service/socialMediaStorage.service';
+import { normalizeMediaUrl } from '../util/normalizeMediaUrl';
 import { SocioRewardPointsService } from './socioRewardPoints.service';
 
 function mediaIdFromUrl(url: string | null | undefined): string | null {
@@ -21,7 +21,7 @@ export class StoryService {
     return repo.save(
       repo.create({
         authorId,
-        mediaUrl: data.mediaUrl,
+        mediaUrl: normalizeMediaUrl(data.mediaUrl) ?? data.mediaUrl,
         mediaType: data.mediaType || 'image',
         textOverlay: data.textOverlay || null,
         expiresAt,
@@ -49,14 +49,18 @@ export class StoryService {
       .andWhere('s.expires_at > :now', { now: new Date() })
       .andWhere('s.status = :status', { status: 'active' })
       .orderBy('s.created_at', 'DESC')
-      .getMany();
+      .getMany()
+      .then((rows) =>
+        rows.map((s) => ({ ...s, mediaUrl: normalizeMediaUrl(s.mediaUrl) ?? s.mediaUrl })),
+      );
   }
 
   async getMyStories(userId: string) {
-    return AppDataSource.getRepository(Story).find({
+    const rows = await AppDataSource.getRepository(Story).find({
       where: { authorId: userId, status: 'active' },
       order: { createdAt: 'DESC' },
     });
+    return rows.map((s) => ({ ...s, mediaUrl: normalizeMediaUrl(s.mediaUrl) ?? s.mediaUrl }));
   }
 
   /**
@@ -89,7 +93,7 @@ export class StoryService {
         .execute();
 
       if (mediaIds.length > 0) {
-        await manager.getRepository(SocialMedia).delete({ id: In(mediaIds) });
+        await deleteMediaByIds(mediaIds);
       }
       return targets.length;
     });

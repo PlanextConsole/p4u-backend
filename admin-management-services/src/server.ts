@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import path from 'path';
 import { AppDataSource } from './config/database';
+import { adminUploadRoot, ensureAdminUploadDir } from './config/uploadPaths';
 import { bootstrapAllSharedTables } from './config/bootstrapSchema';
 import {
   repairCatalogVendorsSchema,
@@ -28,6 +28,8 @@ const app: Express = express();
 const PORT = parseInt(process.env.SERVER_PORT || '8082', 10);
 const DISCOVERY_URL = process.env.DISCOVERY_SERVICE_URL || 'http://localhost:8761';
 
+ensureAdminUploadDir();
+
 app.use(cors());
 
 // Upload routes MUST be registered BEFORE express.json() to keep the multipart stream intact
@@ -37,7 +39,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve uploaded files
-app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
+app.use('/uploads', express.static(adminUploadRoot()));
 
 async function startServer() {
   try {

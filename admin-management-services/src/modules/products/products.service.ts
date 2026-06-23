@@ -9,6 +9,7 @@ import { UpdateProductRequestDto } from './dto/update-product-request.dto';
 import { CreateTaxConfigurationDto } from './dto/create-tax-configuration.dto';
 import { UpdateTaxConfigurationDto } from './dto/update-tax-configuration.dto';
 import { CommerceReview } from './entities/CommerceReview';
+import { normalizeMediaUrl, normalizeMediaUrlList } from '../../util/normalizeMediaUrl';
 
 export class ProductsAdminService {
   private audit = new AuditService();
@@ -45,8 +46,8 @@ export class ProductsAdminService {
       longDescription: dto.longDescription ?? null,
       promiseP4u: dto.promiseP4u ?? null,
       helpLineNumber: dto.helpLineNumber ?? null,
-      thumbnailUrl: dto.thumbnailUrl ?? null,
-      bannerUrls: dto.bannerUrls ?? null,
+      thumbnailUrl: normalizeMediaUrl(dto.thumbnailUrl ?? null),
+      bannerUrls: normalizeMediaUrlList(dto.bannerUrls ?? null),
       commissionOverridePercent: dto.commissionOverridePercent ?? null,
       description: dto.description ?? null,
       price: dto.price ?? '0',
@@ -78,8 +79,8 @@ export class ProductsAdminService {
     if (dto.longDescription !== undefined) row.longDescription = dto.longDescription;
     if (dto.promiseP4u !== undefined) row.promiseP4u = dto.promiseP4u;
     if (dto.helpLineNumber !== undefined) row.helpLineNumber = dto.helpLineNumber;
-    if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = dto.thumbnailUrl;
-    if (dto.bannerUrls !== undefined) row.bannerUrls = dto.bannerUrls;
+    if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = normalizeMediaUrl(dto.thumbnailUrl);
+    if (dto.bannerUrls !== undefined) row.bannerUrls = normalizeMediaUrlList(dto.bannerUrls);
     if (dto.commissionOverridePercent !== undefined) row.commissionOverridePercent = dto.commissionOverridePercent;
     if (dto.description !== undefined) row.description = dto.description;
     if (dto.price !== undefined) row.price = dto.price;

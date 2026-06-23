@@ -6,8 +6,12 @@ import { createSocioUploadRoutes, createSocioMediaPublicRoutes } from './routes/
 import { registerErrorHandlers } from './middleware/errorHandlers';
 import { DiscoveryRegistration } from './service/discoveryRegistration';
 import { AppDataSource } from './config/database';
+import { ensureSocioUploadDir } from './config/uploadPaths';
+import { repairAndMigrateSocioMedia } from './config/repairSocioMediaStorage';
 
 dotenv.config();
+
+ensureSocioUploadDir();
 
 const app: Express = express();
 const PORT = parseInt(process.env.SERVER_PORT || '8090', 10);
@@ -16,8 +20,7 @@ const SERVICE_HOST = process.env.SERVICE_HOST || 'localhost';
 
 app.use(cors());
 
-// Public media reads — bytes streamed straight from `social_media`. Mounted before
-// the JWT-gated routers so <img> tags can fetch without a token.
+// Public media reads from disk (or legacy DB blob during migration). No auth on GET.
 app.use('/socio-uploads', createSocioMediaPublicRoutes());
 
 // Upload routes MUST be registered BEFORE express.json() so multer can parse multipart/form-data.
@@ -51,6 +54,7 @@ process.on('SIGINT', shutdown);
 async function startServer() {
   try {
     await AppDataSource.initialize();
+    await repairAndMigrateSocioMedia();
     app.listen(PORT, async () => {
       try {
         await discovery.register({

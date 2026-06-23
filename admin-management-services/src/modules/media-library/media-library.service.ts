@@ -7,8 +7,9 @@ import { AuditService } from '../admin-core/services/audit.service';
 import { MediaLibraryFolder } from './entities/MediaLibraryFolder';
 import { MediaLibraryAsset } from './entities/MediaLibraryAsset';
 import { MediaLibraryB2Service, isB2Configured, publicFileUrlForKey } from './media-library-b2.service';
+import { adminUploadRoot, adminUploadPublicUrl } from '../../config/uploadPaths';
 
-const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
+const UPLOAD_DIR = adminUploadRoot();
 
 function slugify(name: string): string {
   let s = name
@@ -137,13 +138,12 @@ export class MediaLibraryAdminService {
 
   async recordUploadedDiskFile(
     folderId: string,
-    multerFile: Express.Multer.File,
-    baseUrl: string
+    multerFile: Express.Multer.File
   ): Promise<MediaLibraryAsset> {
     const folder = await this.getFolder(folderId);
     if (!folder) throw new Error('Folder not found');
     const rel = path.join('media-library', folderId, multerFile.filename).replace(/\\/g, '/');
-    const fileUrl = `${baseUrl}/uploads/${rel}`;
+    const fileUrl = adminUploadPublicUrl(rel);
     const repo = this.assetRepo();
     const row = repo.create({
       id: randomUUID(),
@@ -183,7 +183,7 @@ export class MediaLibraryAdminService {
     });
   }
 
-  async ingestZipToFolder(folderId: string, zipDiskPath: string, baseUrl: string): Promise<{ created: number }> {
+  async ingestZipToFolder(folderId: string, zipDiskPath: string): Promise<{ created: number }> {
     const folder = await this.getFolder(folderId);
     if (!folder) throw new Error('Folder not found');
     const destBase = path.join(UPLOAD_DIR, 'media-library', folderId);
@@ -209,7 +209,7 @@ export class MediaLibraryAdminService {
         id: randomUUID(),
         folderId,
         originalName: safeInner,
-        fileUrl: `${baseUrl}/uploads/${rel}`,
+        fileUrl: adminUploadPublicUrl(rel),
         relativePath: rel,
         mime: mimeFromName(safeInner),
         sizeBytes: String(stat.size),
@@ -222,7 +222,7 @@ export class MediaLibraryAdminService {
     return { created };
   }
 
-  async importB2Keys(keys: string[], folderId: string, baseUrl: string): Promise<{ imported: number }> {
+  async importB2Keys(keys: string[], folderId: string): Promise<{ imported: number }> {
     if (!isB2Configured()) throw new Error('B2 not configured');
     const folder = await this.getFolder(folderId);
     if (!folder) throw new Error('Folder not found');
@@ -241,7 +241,7 @@ export class MediaLibraryAdminService {
         id: randomUUID(),
         folderId,
         originalName: baseName,
-        fileUrl: `${baseUrl}/uploads/${rel}`,
+        fileUrl: adminUploadPublicUrl(rel),
         relativePath: rel,
         mime: mimeFromName(baseName),
         sizeBytes: String(stat.size),

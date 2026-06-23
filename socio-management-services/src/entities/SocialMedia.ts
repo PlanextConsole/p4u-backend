@@ -1,17 +1,14 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
 
 /**
- * Stores socio media bytes directly in the database (per current spec — no object store yet).
- * Posts/stories reference these rows via a path-only URL of the shape
- *   `/socio-uploads/media/{id}`
- * which the gateway/frontend resolve through the standard socio static prefix.
+ * Socio post/story media metadata. File bytes live on disk under UPLOAD_DIR/media/{id}.ext;
+ * posts/stories reference rows via path-only URL `/socio-uploads/media/{id}`.
  */
 @Entity('social_media')
 export class SocialMedia {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** 'image' | 'video' — coarse kind for client rendering decisions. */
   @Column({ type: 'varchar', length: 16, default: 'image' })
   @Index()
   kind!: string;
@@ -25,11 +22,14 @@ export class SocialMedia {
   @Column({ name: 'size_bytes', type: 'int', default: 0 })
   sizeBytes!: number;
 
-  /** Raw bytes. LONGBLOB in MySQL (up to 4GB; multer cap keeps it well below that). */
-  @Column({ type: 'longblob' })
-  data!: Buffer;
+  /** Relative path under UPLOAD_DIR, e.g. `media/{uuid}.jpg` */
+  @Column({ name: 'storage_path', type: 'varchar', length: 512, nullable: true })
+  storagePath!: string | null;
 
-  /** Uploader's keycloak sub. Used for ownership checks on DELETE. */
+  /** Legacy LONGBLOB — migrated to disk on startup; new rows leave this null. */
+  @Column({ type: 'longblob', nullable: true })
+  data!: Buffer | null;
+
   @Column({ name: 'owner_id', type: 'varchar', length: 128 })
   @Index()
   ownerId!: string;

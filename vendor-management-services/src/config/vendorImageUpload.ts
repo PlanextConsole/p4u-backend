@@ -2,9 +2,11 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 
-/** Writable upload root (created on startup in server.ts). */
+/** Writable upload root (created on startup in server.ts). Override on VPS via UPLOAD_DIR. */
 export function vendorUploadRoot(): string {
-  return path.resolve(process.cwd(), "uploads");
+  const env = (process.env.UPLOAD_DIR || process.env.VENDOR_UPLOAD_DIR)?.trim();
+  if (env) return path.resolve(env);
+  return path.resolve(process.cwd(), 'uploads');
 }
 
 export function ensureVendorUploadDir(): void {

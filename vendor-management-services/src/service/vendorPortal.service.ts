@@ -8,6 +8,7 @@ import { Product } from '../entities/Product';
 import { ProductCategory } from '../entities/ProductCategory';
 import { Settlement } from '../entities/Settlement';
 import { PatchVendorProfileDto } from '../dto/patch-vendor-profile.dto';
+import { normalizeDocumentsJson, normalizeMediaUrl } from '../util/normalizeMediaUrl';
 import { PatchVendorOrderDto } from '../dto/patch-order.dto';
 import { CreateVendorOrganizationOrderDto } from '../dto/create-organization-order.dto';
 import { UpdateVendorOrganizationOrderDto } from '../dto/update-organization-order.dto';
@@ -67,8 +68,8 @@ export class VendorPortalService {
     if (dto.ownerName !== undefined) row.ownerName = dto.ownerName;
     if (dto.age !== undefined) row.age = dto.age;
     if (dto.gender !== undefined) row.gender = dto.gender;
-    if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = dto.thumbnailUrl;
-    if (dto.bannerUrl !== undefined) row.bannerUrl = dto.bannerUrl;
+    if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = normalizeMediaUrl(dto.thumbnailUrl);
+    if (dto.bannerUrl !== undefined) row.bannerUrl = normalizeMediaUrl(dto.bannerUrl);
     if (dto.gst !== undefined) row.gst = dto.gst;
     if (dto.pan !== undefined) row.pan = dto.pan;
     if (dto.email !== undefined) row.email = dto.email;
@@ -83,7 +84,7 @@ export class VendorPortalService {
     if (dto.categoriesJson !== undefined) row.categoriesJson = dto.categoriesJson;
     if (dto.servicesJson !== undefined) row.servicesJson = dto.servicesJson;
     if (dto.commissionRate !== undefined) row.commissionRate = dto.commissionRate;
-    if (dto.documentsJson !== undefined) row.documentsJson = dto.documentsJson;
+    if (dto.documentsJson !== undefined) row.documentsJson = normalizeDocumentsJson(dto.documentsJson);
     if (dto.bankJson !== undefined) row.bankJson = dto.bankJson;
     if (dto.notes !== undefined) row.notes = dto.notes;
     return repo.save(row);

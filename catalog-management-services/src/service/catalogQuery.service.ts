@@ -7,6 +7,39 @@ import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { Product } from '../entities/Product';
 import { Vendor } from '../entities/Vendor';
 import { VendorService } from '../entities/VendorService';
+import { normalizeDocumentsJson, normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
+
+function normCategory<T extends PublicCategory>(c: T): T {
+  return {
+    ...c,
+    thumbnailUrl: normalizeMediaUrl(c.thumbnailUrl ?? null),
+    iconUrl: normalizeMediaUrl(c.iconUrl ?? null),
+    bannerUrls: normalizeMediaUrlList(c.bannerUrls ?? null),
+  };
+}
+
+function normProduct<T extends { thumbnailUrl?: string | null; bannerUrls?: string[] | null }>(p: T): T {
+  return {
+    ...p,
+    thumbnailUrl: normalizeMediaUrl(p.thumbnailUrl ?? null),
+    bannerUrls: normalizeMediaUrlList(p.bannerUrls ?? null),
+  };
+}
+
+function normVendor<T extends {
+  logoUrl?: string | null;
+  thumbnailUrl?: string | null;
+  bannerUrl?: string | null;
+  documentsJson?: Record<string, unknown> | null;
+}>(v: T): T {
+  return {
+    ...v,
+    logoUrl: normalizeMediaUrl(v.logoUrl ?? null),
+    thumbnailUrl: normalizeMediaUrl(v.thumbnailUrl ?? null),
+    bannerUrl: normalizeMediaUrl(v.bannerUrl ?? null),
+    documentsJson: normalizeDocumentsJson(v.documentsJson ?? null),
+  };
+}
 
 type Paging = { limit: number; offset: number };
 
@@ -53,7 +86,7 @@ export class CatalogQueryService {
       const qb = repo.createQueryBuilder('c').orderBy('c.sortOrder', 'ASC').addOrderBy('c.name', 'ASC');
       if (!includeInactive) qb.andWhere('c.isActive = :a', { a: true });
       const rows = await qb.getMany();
-      return rows.map((c) => ({
+      return rows.map((c) => normCategory({
         id: c.id,
         name: c.name,
         parentId: null,
@@ -67,7 +100,7 @@ export class CatalogQueryService {
     const qb = repo.createQueryBuilder('c').orderBy('c.sortOrder', 'ASC').addOrderBy('c.name', 'ASC');
     if (!includeInactive) qb.andWhere('c.isActive = :a', { a: true });
     const rows = await qb.getMany();
-    return rows.map((c) => ({
+    return rows.map((c) => normCategory({
       id: c.id,
       name: c.name,
       parentId: null,
@@ -90,7 +123,7 @@ export class CatalogQueryService {
       .addOrderBy('s.name', 'ASC');
     if (!includeInactive) qb.andWhere('s.isActive = :a', { a: true });
     const rows = await qb.getMany();
-    return rows.map((s) => ({
+    return rows.map((s) => normCategory({
       id: s.id,
       name: s.name,
       parentId: s.productCategoryId,
@@ -116,13 +149,14 @@ export class CatalogQueryService {
       qb.andWhere('v.vendorKind = :vk', { vk: kind });
     }
     const [items, total] = await qb.getManyAndCount();
-    return { items, total };
+    return { items: items.map(normVendor), total };
   }
 
   async getVendor(id: string, includeInactive: boolean) {
     const repo = AppDataSource.getRepository(Vendor);
     const where = includeInactive ? { id } : { id, status: 'active' };
-    return repo.findOne({ where });
+    const row = await repo.findOne({ where });
+    return row ? normVendor(row) : null;
   }
 
   async listProducts(vendorId: string | undefined, includeInactive: boolean, paging: Paging) {
@@ -138,12 +172,15 @@ export class CatalogQueryService {
     this.applyPublicProductFilters(qb, includeInactive);
 
     const [items, total] = await qb.getManyAndCount();
-    return { items, total };
+    return { items: items.map(normProduct), total };
   }
 
   async getProduct(id: string, includeInactive: boolean) {
     const repo = AppDataSource.getRepository(Product);
-    if (includeInactive) return repo.findOne({ where: { id } });
+    if (includeInactive) {
+      const row = await repo.findOne({ where: { id } });
+      return row ? normProduct(row) : null;
+    }
     const row = await repo
       .createQueryBuilder('p')
       .innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' })
@@ -151,7 +188,7 @@ export class CatalogQueryService {
       .andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' })
       .andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true })
       .getOne();
-    return row;
+    return row ? normProduct(row) : null;
   }
 
   async listProductsForBrowse(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {
@@ -184,11 +221,11 @@ export class CatalogQueryService {
     }
     const enriched = items.map((p) => {
       const v = p.vendorId ? vendorMap.get(p.vendorId) : undefined;
-      return {
+      return normProduct({
         ...p,
         vendorBusinessName: v?.businessName ?? null,
-        vendorLogoUrl: v?.logoUrl ?? null,
-      };
+        vendorLogoUrl: normalizeMediaUrl(v?.logoUrl ?? null),
+      } as Product & { vendorBusinessName: string | null; vendorLogoUrl: string | null });
     });
     return { items: enriched, total };
   }
@@ -210,7 +247,13 @@ export class CatalogQueryService {
     }
 
     const [items, total] = await qb.getManyAndCount();
-    return { items, total };
+    return {
+      items: items.map((s) => ({
+        ...s,
+        iconUrl: normalizeMediaUrl(s.iconUrl ?? null),
+      })),
+      total,
+    };
   }
 
   async listVendorOffersForService(serviceId: string, includeInactiveVendors: boolean) {
@@ -252,8 +295,8 @@ export class CatalogQueryService {
         vendor: {
           id: v.id,
           businessName: v.businessName,
-          logoUrl: v.logoUrl,
-          thumbnailUrl: v.thumbnailUrl,
+          logoUrl: normalizeMediaUrl(v.logoUrl ?? null),
+          thumbnailUrl: normalizeMediaUrl(v.thumbnailUrl ?? null),
         },
       }));
     }
@@ -281,8 +324,8 @@ export class CatalogQueryService {
         vendor: {
           id: v.id,
           businessName: v.businessName,
-          logoUrl: v.logoUrl,
-          thumbnailUrl: v.thumbnailUrl,
+          logoUrl: normalizeMediaUrl(v.logoUrl ?? null),
+          thumbnailUrl: normalizeMediaUrl(v.thumbnailUrl ?? null),
         },
       });
     }

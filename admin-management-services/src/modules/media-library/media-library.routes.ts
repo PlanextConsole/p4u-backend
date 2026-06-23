@@ -9,12 +9,10 @@ import { getAuthSub, clientIp, parseLimitOffset } from '../../http/adminHttp';
 import { MediaLibraryAdminService } from './media-library.service';
 import { CreateMediaFolderDto } from './dto/create-media-folder.dto';
 import { B2ImportDto } from './dto/b2-import.dto';
+import { adminUploadRoot, ensureAdminUploadDir } from '../../config/uploadPaths';
 
-const UPLOAD_DIR = path.resolve(__dirname, '../../../uploads');
-
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+ensureAdminUploadDir();
+const UPLOAD_DIR = adminUploadRoot();
 
 function safeFileBase(name: string): string {
   return path.basename(name || 'file').replace(/[^\w.\-()+@ ]/g, '_').slice(0, 180) || 'file';
@@ -72,8 +70,6 @@ export function createMediaLibraryAdminRoutes(): Router {
   r.use(requireRole('ADMIN'));
   r.use(requirePermission('banner.admin.manage'));
 
-  const baseUrl = (req: Request) => `${req.protocol}://${req.get('host')}`;
-
   r.get('/media-library/folders', async (req: Request, res: Response) => {
     try {
       const kind = typeof req.query.kind === 'string' ? req.query.kind : 'all';
@@ -119,7 +115,7 @@ export function createMediaLibraryAdminRoutes(): Router {
         if (!files?.length) return res.status(400).json({ message: 'No files uploaded' });
         const out = [];
         for (const f of files) {
-          out.push(await svc.recordUploadedDiskFile(req.params.folderId, f, baseUrl(req)));
+          out.push(await svc.recordUploadedDiskFile(req.params.folderId, f));
         }
         res.status(201).json({ items: out });
       } catch (e: any) {
@@ -135,7 +131,7 @@ export function createMediaLibraryAdminRoutes(): Router {
       const z = req.file;
       if (!z?.path) return res.status(400).json({ message: 'No ZIP uploaded' });
       try {
-        const { created } = await svc.ingestZipToFolder(req.params.folderId, z.path, baseUrl(req));
+        const { created } = await svc.ingestZipToFolder(req.params.folderId, z.path);
         res.status(201).json({ created });
       } catch (e: any) {
         res.status(400).json({ message: e.message });
@@ -181,7 +177,7 @@ export function createMediaLibraryAdminRoutes(): Router {
         const msgs = errors.map(er => Object.values(er.constraints || {})).flat();
         return res.status(400).json({ message: msgs.join(', ') });
       }
-      const { imported } = await svc.importB2Keys(dto.keys, dto.folderId, baseUrl(req));
+      const { imported } = await svc.importB2Keys(dto.keys, dto.folderId);
       res.status(201).json({ imported });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
