@@ -17,6 +17,8 @@ import { PatchVendorServiceOfferingDto } from '../dto/patch-vendor-service-offer
 import { VendorOfferedServicesService } from '../service/vendorOfferedServices.service';
 import { VendorBookingAvailabilityService } from '../service/vendorBookingAvailability.service';
 import { VendorMediaService } from '../service/vendorMedia.service';
+import { VendorDropshippingService } from '../service/vendorDropshipping.service';
+import { PutVendorDropshippingSettingsDto, PatchDropshippingOrderStatusDto } from '../dto/put-vendor-dropshipping-settings.dto';
 import { vendorImageUpload } from '../config/vendorImageUpload';
 import { createVendorMediaUpload, vendorMediaPublicUrl } from '../config/vendorMediaUpload';
 import { vendorDocumentUpload, vendorDocumentPublicUrl } from '../config/vendorDocumentUpload';
@@ -50,6 +52,7 @@ export function createVendorRoutes(): Router {
   const offeredSvc = new VendorOfferedServicesService();
   const bookingAvailSvc = new VendorBookingAvailabilityService();
   const mediaSvc = new VendorMediaService();
+  const dropshipSvc = new VendorDropshippingService();
 
   router.get('/public/health', (_req: Request, res: Response) => {
     sendSuccess(res, {
@@ -867,6 +870,114 @@ export function createVendorRoutes(): Router {
         sendBadRequest(res, e.message);
       }
     }
+  );
+
+  // ─── Dropshipping ───
+  router.get(
+    '/me/dropshipping/settings',
+    requirePermission('vendor.portal.me.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const data = await dropshipSvc.getSettingsBundle(vendorId);
+      sendSuccess(res, data);
+    },
+  );
+
+  router.put(
+    '/me/dropshipping/settings',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const dto = plainToClass(PutVendorDropshippingSettingsDto, req.body);
+      const errors = await validate(dto);
+      if (errors.length > 0) {
+        const msgs = errors.map((e) => Object.values(e.constraints || {})).flat();
+        return sendBadRequest(res, msgs.join(', '));
+      }
+      try {
+        const data = await dropshipSvc.saveSettings(vendorId, dto);
+        sendSuccess(res, data);
+      } catch (e: any) {
+        sendBadRequest(res, e?.message || 'Save failed');
+      }
+    },
+  );
+
+  router.get(
+    '/me/dropshipping/suppliers',
+    requirePermission('vendor.portal.me.read'),
+    async (_req: Request, res: Response) => {
+      const data = await dropshipSvc.listActiveSuppliers();
+      sendSuccess(res, data);
+    },
+  );
+
+  router.get(
+    '/me/dropshipping/orders',
+    requirePermission('vendor.portal.order.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const { limit, offset } = parsePaging(req);
+      const data = await dropshipSvc.listOrders(vendorId, limit, offset);
+      sendSuccess(res, data);
+    },
+  );
+
+  router.post(
+    '/me/dropshipping/orders/from-commerce/:orderId',
+    requirePermission('vendor.portal.order.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      try {
+        const row = await dropshipSvc.ensureDropshipOrderForCommerceOrder(vendorId, req.params.orderId);
+        sendCreated(res, row);
+      } catch (e: any) {
+        if (e.message === 'Order not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e?.message || 'Create failed');
+      }
+    },
+  );
+
+  router.post(
+    '/me/dropshipping/orders/:id/forward',
+    requirePermission('vendor.portal.order.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      try {
+        const row = await dropshipSvc.forwardOrder(vendorId, req.params.id);
+        sendSuccess(res, row);
+      } catch (e: any) {
+        if (e.message === 'Dropshipping order not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e?.message || 'Forward failed');
+      }
+    },
+  );
+
+  router.patch(
+    '/me/dropshipping/orders/:id/status',
+    requirePermission('vendor.portal.order.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const dto = plainToClass(PatchDropshippingOrderStatusDto, req.body);
+      const errors = await validate(dto);
+      if (errors.length > 0) {
+        const msgs = errors.map((e) => Object.values(e.constraints || {})).flat();
+        return sendBadRequest(res, msgs.join(', '));
+      }
+      try {
+        const row = await dropshipSvc.updateOrderStatus(vendorId, req.params.id, dto.status);
+        sendSuccess(res, row);
+      } catch (e: any) {
+        if (e.message === 'Dropshipping order not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e?.message || 'Update failed');
+      }
+    },
   );
 
   return router;

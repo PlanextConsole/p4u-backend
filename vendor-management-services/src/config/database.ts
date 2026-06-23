@@ -13,6 +13,11 @@ import { CatalogVendorService } from '../entities/CatalogVendorService';
 import { ServiceCategory } from '../entities/ServiceCategory';
 import { VendorMediaFolder } from '../entities/VendorMediaFolder';
 import { VendorMediaAsset } from '../entities/VendorMediaAsset';
+import { DropshippingSupplier } from '../entities/DropshippingSupplier';
+import { VendorDropshippingSettings } from '../entities/VendorDropshippingSettings';
+import { DropshippingOrder } from '../entities/DropshippingOrder';
+import { PlatformSettings } from '../entities/PlatformSettings';
+import { UserNotification } from '../entities/UserNotification';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -36,6 +41,11 @@ export const AppDataSource = new DataSource({
     ServiceCategory,
     VendorMediaFolder,
     VendorMediaAsset,
+    DropshippingSupplier,
+    VendorDropshippingSettings,
+    DropshippingOrder,
+    PlatformSettings,
+    UserNotification,
   ],
   // Disable implicit DDL by default to avoid cross-service schema drift.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',

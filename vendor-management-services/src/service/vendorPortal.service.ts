@@ -12,6 +12,7 @@ import { PatchVendorOrderDto } from '../dto/patch-order.dto';
 import { CreateVendorOrganizationOrderDto } from '../dto/create-organization-order.dto';
 import { UpdateVendorOrganizationOrderDto } from '../dto/update-organization-order.dto';
 import { enrichOrderForVendorPortal, enrichOrdersForVendorPortal } from './vendorOrderEnrichment';
+import { VendorNotificationEmitter } from './vendorNotificationEmitter';
 
 function metaRecord(m: unknown): Record<string, unknown> {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
@@ -42,6 +43,7 @@ function normalizeSettlementRow(row: Settlement): Settlement {
 }
 
 export class VendorPortalService {
+  private readonly notifier = new VendorNotificationEmitter();
   async resolveVendorId(auth: any): Promise<string | null> {
     const sub = auth?.sub ? String(auth.sub) : '';
     if (sub) {
@@ -111,12 +113,27 @@ export class VendorPortalService {
     const repo = AppDataSource.getRepository(Order);
     const row = await this.getOrderForVendor(orderId, vendorId);
     if (!row) throw new Error('Order not found');
+    const prevStatus = row.status;
     if (dto.customerId !== undefined) row.customerId = dto.customerId;
     if (dto.orderRef !== undefined) row.orderRef = dto.orderRef;
     if (dto.status !== undefined) row.status = dto.status;
     if (dto.totalAmount !== undefined) row.totalAmount = dto.totalAmount;
     if (dto.metadata !== undefined) row.metadata = dto.metadata;
-    return repo.save(row);
+    const saved = await repo.save(row);
+    if (dto.status !== undefined && dto.status !== prevStatus) {
+      const meta = metaRecord(saved.metadata);
+      const displayId =
+        (typeof meta.displayId === 'string' && meta.displayId) ||
+        saved.orderRef ||
+        saved.id.slice(0, 8).toUpperCase();
+      void this.notifier.notifyVendorById(vendorId, {
+        type: 'order',
+        title: `Order ${displayId} updated`,
+        body: `Status is now ${saved.status}.`,
+        deepLink: '/dashboard/product/orders',
+      });
+    }
+    return enrichOrderForVendorPortal(saved);
   }
 
   async listOrganizationOrders(vendorId: string, limit: number, offset: number) {
