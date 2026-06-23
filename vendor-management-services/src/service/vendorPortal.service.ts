@@ -11,8 +11,39 @@ import { PatchVendorProfileDto } from '../dto/patch-vendor-profile.dto';
 import { PatchVendorOrderDto } from '../dto/patch-order.dto';
 import { CreateVendorOrganizationOrderDto } from '../dto/create-organization-order.dto';
 import { UpdateVendorOrganizationOrderDto } from '../dto/update-organization-order.dto';
+import { enrichOrderForVendorPortal, enrichOrdersForVendorPortal } from './vendorOrderEnrichment';
+import { VendorNotificationEmitter } from './vendorNotificationEmitter';
+
+function metaRecord(m: unknown): Record<string, unknown> {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
+  return m as Record<string, unknown>;
+}
+
+function normalizeSettlementRow(row: Settlement): Settlement {
+  const meta = metaRecord(row.metadata);
+  const displayRef =
+    (typeof meta.displayRef === 'string' && meta.displayRef.trim()) ||
+    (typeof meta.settlementCode === 'string' && meta.settlementCode.trim()) ||
+    `STL-${String(row.id).slice(0, 8).toUpperCase()}`;
+  const orderRef =
+    (typeof meta.orderRef === 'string' && meta.orderRef.trim()) ||
+    (typeof meta.order_ref === 'string' && meta.order_ref.trim()) ||
+    (row.orderId ? `ORD-${String(row.orderId).slice(0, 8).toUpperCase()}` : '');
+  const gross = meta.gross ?? meta.grossAmount ?? meta.orderTotal;
+  const commission = meta.commission ?? meta.commissionAmount ?? meta.platformFee;
+  row.metadata = {
+    ...meta,
+    displayRef,
+    settlementCode: displayRef,
+    orderRef: orderRef || meta.orderRef,
+    gross: gross ?? meta.gross,
+    commission: commission ?? meta.commission,
+  };
+  return row;
+}
 
 export class VendorPortalService {
+  private readonly notifier = new VendorNotificationEmitter();
   async resolveVendorId(auth: any): Promise<string | null> {
     const sub = auth?.sub ? String(auth.sub) : '';
     if (sub) {
@@ -21,23 +52,7 @@ export class VendorPortalService {
       if (v?.id) return v.id;
     }
     const claim = auth?.vendor_id;
-    if (claim) return String(claim);
-
-    const phoneHint = String(
-      auth?.phone || auth?.preferred_username || auth?.username || '',
-    ).trim();
-    if (phoneHint) {
-      const last10 = phoneHint.replace(/\D/g, '').slice(-10);
-      if (last10.length === 10) {
-        const repo = AppDataSource.getRepository(Vendor);
-        const candidates = [phoneHint, last10, `+91${last10}`, `91${last10}`];
-        for (const candidate of candidates) {
-          const v = await repo.findOne({ where: { phone: candidate } });
-          if (v?.id) return v.id;
-        }
-      }
-    }
-    return null;
+    return claim ? String(claim) : null;
   }
 
   async getVendorById(vendorId: string): Promise<Vendor | null> {
@@ -84,25 +99,41 @@ export class VendorPortalService {
       take: limit,
       skip: offset,
     });
-    return { items, total, limit, offset };
+    const enriched = await enrichOrdersForVendorPortal(items);
+    return { items: enriched, total, limit, offset };
   }
 
   async getOrderForVendor(orderId: string, vendorId: string): Promise<Order | null> {
     const row = await AppDataSource.getRepository(Order).findOne({ where: { id: orderId } });
     if (!row || row.vendorId !== vendorId) return null;
-    return row;
+    return enrichOrderForVendorPortal(row);
   }
 
   async updateOrderForVendor(orderId: string, vendorId: string, dto: PatchVendorOrderDto): Promise<Order> {
     const repo = AppDataSource.getRepository(Order);
     const row = await this.getOrderForVendor(orderId, vendorId);
     if (!row) throw new Error('Order not found');
+    const prevStatus = row.status;
     if (dto.customerId !== undefined) row.customerId = dto.customerId;
     if (dto.orderRef !== undefined) row.orderRef = dto.orderRef;
     if (dto.status !== undefined) row.status = dto.status;
     if (dto.totalAmount !== undefined) row.totalAmount = dto.totalAmount;
     if (dto.metadata !== undefined) row.metadata = dto.metadata;
-    return repo.save(row);
+    const saved = await repo.save(row);
+    if (dto.status !== undefined && dto.status !== prevStatus) {
+      const meta = metaRecord(saved.metadata);
+      const displayId =
+        (typeof meta.displayId === 'string' && meta.displayId) ||
+        saved.orderRef ||
+        saved.id.slice(0, 8).toUpperCase();
+      void this.notifier.notifyVendorById(vendorId, {
+        type: 'order',
+        title: `Order ${displayId} updated`,
+        body: `Status is now ${saved.status}.`,
+        deepLink: '/dashboard/product/orders',
+      });
+    }
+    return enrichOrderForVendorPortal(saved);
   }
 
   async listOrganizationOrders(vendorId: string, limit: number, offset: number) {
@@ -195,14 +226,65 @@ export class VendorPortalService {
     return { vendor: v, plan, effective };
   }
 
-  async listSettlementsForVendor(vendorId: string, limit: number, offset: number) {
-    const [items, total] = await AppDataSource.getRepository(Settlement).findAndCount({
-      where: { vendorId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: offset,
+  async listSettlementsForVendor(
+    vendorId: string,
+    limit: number,
+    offset: number,
+    filters?: { q?: string; status?: string; from?: string; to?: string },
+  ) {
+    const qb = AppDataSource.getRepository(Settlement)
+      .createQueryBuilder('s')
+      .where('s.vendorId = :vendorId', { vendorId });
+
+    const status = (filters?.status || '').trim();
+    if (status && status !== 'all') qb.andWhere('s.status = :status', { status });
+
+    const from = (filters?.from || '').trim();
+    if (from) qb.andWhere('DATE(s.createdAt) >= :from', { from });
+
+    const to = (filters?.to || '').trim();
+    if (to) qb.andWhere('DATE(s.createdAt) <= :to', { to });
+
+    const q = (filters?.q || '').trim();
+    if (q) {
+      const like = `%${q}%`;
+      qb.andWhere(
+        '(s.id LIKE :like OR s.orderId LIKE :like OR JSON_UNQUOTE(JSON_EXTRACT(s.metadata, "$.orderRef")) LIKE :like OR JSON_UNQUOTE(JSON_EXTRACT(s.metadata, "$.settlementCode")) LIKE :like)',
+        { like },
+      );
+    }
+
+    qb.orderBy('s.createdAt', 'DESC').take(limit).skip(offset);
+    const [items, total] = await qb.getManyAndCount();
+    return { items: items.map(normalizeSettlementRow), total, limit, offset };
+  }
+
+  async getSettlementForVendor(vendorId: string, settlementId: string): Promise<Settlement | null> {
+    const row = await AppDataSource.getRepository(Settlement).findOne({ where: { id: settlementId } });
+    if (!row || row.vendorId !== vendorId) return null;
+    return normalizeSettlementRow(row);
+  }
+
+  async getRatingSummaryForVendor(vendorId: string): Promise<{
+    averageRating: number;
+    reviewCount: number;
+    distribution: Record<string, number>;
+  }> {
+    const repo = AppDataSource.getRepository(VendorReview);
+    const rows = await repo.find({
+      where: { vendorId, status: 'published' },
+      select: ['rating'],
     });
-    return { items, total, limit, offset };
+    const distribution: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+    let sum = 0;
+    for (const r of rows) {
+      const n = Math.min(5, Math.max(1, Number(r.rating) || 0));
+      sum += n;
+      distribution[String(n)] = (distribution[String(n)] || 0) + 1;
+    }
+    const reviewCount = rows.length;
+    const averageRating = reviewCount ? Math.round((sum / reviewCount) * 10) / 10 : 0;
+    return { averageRating, reviewCount, distribution };
   }
 
   /**
