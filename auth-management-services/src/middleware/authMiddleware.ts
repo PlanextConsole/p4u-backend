@@ -5,6 +5,19 @@ import { Request, Response, NextFunction } from 'express';
 const issuerUri = process.env.JWT_ISSUER_URI || 
   `${process.env.KEYCLOAK_SERVER_URL || 'http://localhost:8180'}/realms/${process.env.KEYCLOAK_REALM || 'p4u-realm'}`;
 
+function keycloakJwtIssuers(): string | [string, ...string[]] {
+  const realm = process.env.KEYCLOAK_REALM || 'p4u-realm';
+  const serverUrl = (process.env.KEYCLOAK_SERVER_URL || 'http://localhost:8180').replace(/\/$/, '');
+  const explicit = process.env.JWT_ISSUER_URI?.replace(/\/$/, '');
+  const issuers = new Set<string>();
+  if (explicit) issuers.add(explicit);
+  issuers.add(`${serverUrl}/realms/${realm}`);
+  issuers.add(`http://localhost:8180/realms/${realm}`);
+  issuers.add(`http://127.0.0.1:8180/realms/${realm}`);
+  const issuerList = [...issuers];
+  return issuerList.length === 1 ? issuerList[0] : (issuerList as [string, ...string[]]);
+}
+
 export const jwtAuth = expressjwt({
   secret: expressJwtSecret({
     cache: true,
@@ -12,7 +25,7 @@ export const jwtAuth = expressjwt({
     jwksRequestsPerMinute: 5,
     jwksUri: `${issuerUri}/protocol/openid-connect/certs`,
   }) as GetVerificationKey,
-  issuer: issuerUri,
+  issuer: keycloakJwtIssuers(),
   algorithms: ['RS256'],
   requestProperty: 'auth',
 });

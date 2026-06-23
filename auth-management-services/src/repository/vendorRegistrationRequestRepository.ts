@@ -32,6 +32,17 @@ export class VendorRegistrationRequestRepository {
       .getOne();
   }
 
+  /** Latest signup row for a Firebase uid (vendor OTP registration audit trail). */
+  async findLatestByFirebaseUid(firebaseUid: string): Promise<VendorRegistrationRequest | null> {
+    return this.repository
+      .createQueryBuilder('r')
+      .where("JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.firebaseUid')) = :uid", {
+        uid: firebaseUid,
+      })
+      .orderBy('r.createdAt', 'DESC')
+      .getOne();
+  }
+
   /** Latest still-pending request authored by a given Keycloak user. */
   async findPendingByKeycloakUserId(
     keycloakUserId: string,

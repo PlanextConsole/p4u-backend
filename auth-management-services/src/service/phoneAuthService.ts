@@ -198,7 +198,22 @@ export class PhoneAuthService {
     //    active, rejected — they all need to log in to see their portal
     //    state and the appropriate banner).
     if (intendedRole === 'VENDOR') {
-      const existing = await this.catalogVendorRepo.findByPhone(phone);
+      let existing = await this.catalogVendorRepo.findByPhone(phone);
+      if (!existing?.keycloakUserId) {
+        const signup = await this.vendorRequestRepo.findLatestByFirebaseUid(claims.uid);
+        const payload = (signup?.payload || {}) as Record<string, unknown>;
+        const kcFromSignup =
+          typeof payload.keycloakUserId === 'string' ? payload.keycloakUserId.trim() : '';
+        if (kcFromSignup) {
+          existing =
+            (await this.catalogVendorRepo.findByKeycloakUserId(kcFromSignup)) ??
+            existing;
+          if (!existing?.keycloakUserId) {
+            const auth = await this.loginAsKeycloakUser(kcFromSignup);
+            return { loggedIn: true, phone, auth, intendedRole };
+          }
+        }
+      }
       if (existing && existing.keycloakUserId) {
         const auth = await this.loginAsKeycloakUser(existing.keycloakUserId);
         return { loggedIn: true, phone, auth, intendedRole };
@@ -726,7 +741,10 @@ export class PhoneAuthService {
         params.toString(),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
       );
-      return this.toAuthResponse(response.data);
+      const auth = this.toAuthResponse(response.data);
+      const vendor = await this.catalogVendorRepo.findByKeycloakUserId(keycloakUserId);
+      if (vendor?.id) auth.vendorId = vendor.id;
+      return auth;
     } catch (err: any) {
       const status = err?.response?.status as number | undefined;
       const data = err?.response?.data as Record<string, unknown> | undefined;
