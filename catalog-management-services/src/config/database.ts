@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { ProductCategory } from '../entities/ProductCategory';
 import { ProductSubcategory } from '../entities/ProductSubcategory';
 import { ServiceCategory } from '../entities/ServiceCategory';
+import { ServiceSubcategory } from '../entities/ServiceSubcategory';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { Vendor } from '../entities/Vendor';
 import { Product } from '../entities/Product';
@@ -14,7 +15,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || 'root',
   password: process.env.DB_PASSWORD || 'root@123',
   database: process.env.DB_NAME || 'p4u_admin_db',
-  entities: [ProductCategory, ProductSubcategory, ServiceCategory, CatalogServiceItem, Vendor, Product, VendorService],
+  entities: [ProductCategory, ProductSubcategory, ServiceCategory, ServiceSubcategory, CatalogServiceItem, Vendor, Product, VendorService],
   synchronize: process.env.NODE_ENV !== 'production',
   logging: process.env.NODE_ENV === 'development',
 });

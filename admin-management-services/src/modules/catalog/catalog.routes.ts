@@ -215,6 +215,71 @@ export function createCatalogAdminRoutes(): Router {
   };
   r.patch('/service-categories/:id', patchServiceCategory);
 
+  // ─── Service subcategories ───
+  const listServiceSubcategories = async (req: Request, res: Response) => {
+    try {
+      const items = await svc.listServiceSubcategories(listFlag(req));
+      res.json({ items });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  };
+  r.get('/service-subcategories/all', listServiceSubcategories);
+  r.get('/service-subcategories', listServiceSubcategories);
+
+  r.get('/service-subcategories/:id', async (req: Request, res: Response) => {
+    try {
+      const row = await svc.getServiceSubcategory(req.params.id);
+      if (!row) return res.status(404).json({ message: 'Service subcategory not found' });
+      res.json(row);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  r.delete('/service-subcategories/:id', async (req: Request, res: Response) => {
+    try {
+      await svc.deleteServiceSubcategory(req.params.id, getAuthSub(req), clientIp(req));
+      res.status(204).send();
+    } catch (e: any) {
+      const status = e.message === 'Service subcategory not found' ? 404 : 400;
+      res.status(status).json({ message: e.message });
+    }
+  });
+
+  const createServiceSubcategory = async (req: Request, res: Response) => {
+    try {
+      const dto = plainToClass(CreateCategoryDto, req.body);
+      const errors = await validate(dto);
+      if (errors.length > 0) {
+        const msgs = errors.map(e => Object.values(e.constraints || {})).flat();
+        return res.status(400).json({ message: msgs.join(', ') });
+      }
+      const row = await svc.createServiceSubcategory(dto, getAuthSub(req), clientIp(req));
+      res.status(201).json(row);
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  };
+  r.post('/service-subcategories', createServiceSubcategory);
+
+  const patchServiceSubcategory = async (req: Request, res: Response) => {
+    try {
+      const dto = plainToClass(UpdateCategoryDto, req.body);
+      const errors = await validate(dto);
+      if (errors.length > 0) {
+        const msgs = errors.map(e => Object.values(e.constraints || {})).flat();
+        return res.status(400).json({ message: msgs.join(', ') });
+      }
+      const row = await svc.updateServiceSubcategory(req.params.id, dto, getAuthSub(req), clientIp(req));
+      res.json(row);
+    } catch (e: any) {
+      const status = e.message === 'Service subcategory not found' ? 404 : 400;
+      res.status(status).json({ message: e.message });
+    }
+  };
+  r.patch('/service-subcategories/:id', patchServiceSubcategory);
+
   const listServices = async (req: Request, res: Response) => {
     try {
       const all = req.query.purpose === 'all' || req.query.includeInactive === 'true';

@@ -4,6 +4,7 @@ import { Product } from '../products/entities/Product';
 import { ProductCategory } from './entities/ProductCategory';
 import { ProductSubcategory } from './entities/ProductSubcategory';
 import { ServiceCategory } from './entities/ServiceCategory';
+import { ServiceSubcategory } from './entities/ServiceSubcategory';
 import { CatalogServiceItem } from './entities/CatalogServiceItem';
 import { VendorService as CatalogVendorServiceLink } from './entities/VendorService';
 import { Vendor } from '../vendors/entities/Vendor';
@@ -26,11 +27,27 @@ export class CatalogAdminService {
     const m = (row.metadata && typeof row.metadata === 'object' ? row.metadata : {}) as Record<string, unknown>;
     return {
       ...row,
-      categoryId: row.serviceCategoryId,
+      categoryId: row.serviceSubcategoryId || row.serviceCategoryId,
+      serviceSubcategoryId: row.serviceSubcategoryId,
       emergency: typeof m.emergency === 'boolean' ? m.emergency : false,
       priceType: typeof m.priceType === 'string' ? m.priceType : null,
       duration: typeof m.duration === 'string' ? m.duration : null,
     };
+  }
+
+  private async resolveServiceCategoryLink(categoryId: string): Promise<{
+    serviceCategoryId: string | null;
+    serviceSubcategoryId: string | null;
+  }> {
+    const trimmed = categoryId.trim();
+    const subRepo = AppDataSource.getRepository(ServiceSubcategory);
+    const sub = await subRepo.findOne({ where: { id: trimmed } });
+    if (sub) {
+      return { serviceSubcategoryId: sub.id, serviceCategoryId: sub.serviceCategoryId };
+    }
+    const cat = await this.getServiceCategory(trimmed);
+    if (!cat) throw new Error('Service subcategory not found');
+    return { serviceSubcategoryId: null, serviceCategoryId: cat.id };
   }
 
   // ─── Product categories (shop roots) ───
@@ -282,6 +299,8 @@ export class CatalogAdminService {
   }
 
   async deleteServiceCategory(id: string, actorSub: string, ip: string | undefined): Promise<void> {
+    const sRepo = AppDataSource.getRepository(ServiceSubcategory);
+    await sRepo.delete({ serviceCategoryId: id });
     const repo = AppDataSource.getRepository(ServiceCategory);
     const row = await repo.findOne({ where: { id } });
     if (!row) throw new Error('Service category not found');
@@ -290,6 +309,98 @@ export class CatalogAdminService {
       actorSub,
       action: 'DELETE',
       entityType: 'ServiceCategory',
+      entityId: id,
+      metadata: { name: row.name },
+      ipAddress: ip ?? null,
+    });
+  }
+
+  // ─── Service subcategories ───
+  async listServiceSubcategories(includeInactive: boolean): Promise<ServiceSubcategory[]> {
+    const repo = AppDataSource.getRepository(ServiceSubcategory);
+    const qb = repo.createQueryBuilder('s').orderBy('s.sortOrder', 'ASC').addOrderBy('s.name', 'ASC');
+    if (!includeInactive) qb.andWhere('s.isActive = :a', { a: true });
+    return qb.getMany();
+  }
+
+  async getServiceSubcategory(id: string): Promise<ServiceSubcategory | null> {
+    return AppDataSource.getRepository(ServiceSubcategory).findOne({ where: { id } });
+  }
+
+  async createServiceSubcategory(dto: CreateCategoryDto, actorSub: string, ip: string | undefined): Promise<ServiceSubcategory> {
+    if (!dto.parentId?.trim()) throw new Error('Parent service category is required');
+    const p = await this.getServiceCategory(dto.parentId);
+    if (!p) throw new Error('Service category not found');
+    const repo = AppDataSource.getRepository(ServiceSubcategory);
+    const row = repo.create({
+      serviceCategoryId: dto.parentId,
+      name: dto.name,
+      availability: dto.availability ?? false,
+      emergency: dto.emergency ?? false,
+      trending: dto.trending ?? false,
+      description: dto.description ?? null,
+      slug: dto.slug ?? null,
+      thumbnailUrl: dto.thumbnailUrl ?? null,
+      bannerUrls: dto.bannerUrls ?? null,
+      sortOrder: dto.sortOrder ?? 0,
+      isActive: dto.isActive ?? true,
+      metadata: dto.metadata ?? null,
+    });
+    await repo.save(row);
+    await this.audit.log({
+      actorSub,
+      action: 'CREATE',
+      entityType: 'ServiceSubcategory',
+      entityId: row.id,
+      metadata: { name: row.name },
+      ipAddress: ip ?? null,
+    });
+    return row;
+  }
+
+  async updateServiceSubcategory(id: string, dto: UpdateCategoryDto, actorSub: string, ip: string | undefined): Promise<ServiceSubcategory> {
+    const repo = AppDataSource.getRepository(ServiceSubcategory);
+    const row = await repo.findOne({ where: { id } });
+    if (!row) throw new Error('Service subcategory not found');
+    if (dto.parentId !== undefined) {
+      if (dto.parentId) {
+        const p = await this.getServiceCategory(dto.parentId);
+        if (!p) throw new Error('Service category not found');
+        row.serviceCategoryId = dto.parentId;
+      }
+    }
+    if (dto.name !== undefined) row.name = dto.name;
+    if (dto.availability !== undefined) row.availability = dto.availability;
+    if (dto.emergency !== undefined) row.emergency = dto.emergency;
+    if (dto.trending !== undefined) row.trending = dto.trending;
+    if (dto.description !== undefined) row.description = dto.description;
+    if (dto.slug !== undefined) row.slug = dto.slug;
+    if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = dto.thumbnailUrl;
+    if (dto.bannerUrls !== undefined) row.bannerUrls = dto.bannerUrls;
+    if (dto.sortOrder !== undefined) row.sortOrder = dto.sortOrder;
+    if (dto.isActive !== undefined) row.isActive = dto.isActive;
+    if (dto.metadata !== undefined) row.metadata = dto.metadata;
+    await repo.save(row);
+    await this.audit.log({
+      actorSub,
+      action: 'UPDATE',
+      entityType: 'ServiceSubcategory',
+      entityId: row.id,
+      metadata: { changes: dto },
+      ipAddress: ip ?? null,
+    });
+    return row;
+  }
+
+  async deleteServiceSubcategory(id: string, actorSub: string, ip: string | undefined): Promise<void> {
+    const repo = AppDataSource.getRepository(ServiceSubcategory);
+    const row = await repo.findOne({ where: { id } });
+    if (!row) throw new Error('Service subcategory not found');
+    await repo.remove(row);
+    await this.audit.log({
+      actorSub,
+      action: 'DELETE',
+      entityType: 'ServiceSubcategory',
       entityId: id,
       metadata: { name: row.name },
       ipAddress: ip ?? null,
@@ -310,9 +421,15 @@ export class CatalogAdminService {
   }
 
   async createService(dto: CreateCatalogServiceDto, actorSub: string, ip: string | undefined): Promise<Record<string, unknown>> {
+    let serviceCategoryId: string | null = null;
+    let serviceSubcategoryId: string | null = null;
     if (dto.categoryId) {
-      const c = await this.getServiceCategory(dto.categoryId);
-      if (!c) throw new Error('Service category not found');
+      const link = await this.resolveServiceCategoryLink(dto.categoryId);
+      serviceCategoryId = link.serviceCategoryId;
+      serviceSubcategoryId = link.serviceSubcategoryId;
+      if (!serviceSubcategoryId) {
+        throw new Error('Select a service subcategory (not only the root category)');
+      }
     }
     const meta: Record<string, unknown> = {
       ...(dto.metadata && typeof dto.metadata === 'object' ? dto.metadata : {}),
@@ -324,7 +441,8 @@ export class CatalogAdminService {
     }
     const repo = AppDataSource.getRepository(CatalogServiceItem);
     const row = repo.create({
-      serviceCategoryId: dto.categoryId ?? null,
+      serviceCategoryId,
+      serviceSubcategoryId,
       name: dto.name,
       availability: dto.availability ?? false,
       trending: dto.trending ?? false,
@@ -356,10 +474,16 @@ export class CatalogAdminService {
     if (!row) throw new Error('Service not found');
     if (dto.categoryId !== undefined) {
       if (dto.categoryId) {
-        const c = await this.getServiceCategory(dto.categoryId);
-        if (!c) throw new Error('Service category not found');
+        const link = await this.resolveServiceCategoryLink(dto.categoryId);
+        if (!link.serviceSubcategoryId) {
+          throw new Error('Select a service subcategory (not only the root category)');
+        }
+        row.serviceSubcategoryId = link.serviceSubcategoryId;
+        row.serviceCategoryId = link.serviceCategoryId;
+      } else {
+        row.serviceSubcategoryId = null;
+        row.serviceCategoryId = null;
       }
-      row.serviceCategoryId = dto.categoryId;
     }
     if (dto.name !== undefined) row.name = dto.name;
     if (dto.availability !== undefined) row.availability = dto.availability;

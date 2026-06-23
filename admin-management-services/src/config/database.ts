@@ -12,6 +12,7 @@ import { Occupation } from '../modules/customers/entities/Occupation';
 import { ProductCategory } from '../modules/catalog/entities/ProductCategory';
 import { ProductSubcategory } from '../modules/catalog/entities/ProductSubcategory';
 import { ServiceCategory } from '../modules/catalog/entities/ServiceCategory';
+import { ServiceSubcategory } from '../modules/catalog/entities/ServiceSubcategory';
 import { CatalogServiceItem } from '../modules/catalog/entities/CatalogServiceItem';
 import { VendorService } from '../modules/catalog/entities/VendorService';
 import { Product } from '../modules/products/entities/Product';
@@ -68,6 +69,7 @@ export const AppDataSource = new DataSource({
     ProductCategory,
     ProductSubcategory,
     ServiceCategory,
+    ServiceSubcategory,
     CatalogServiceItem,
     VendorService,
     Product,

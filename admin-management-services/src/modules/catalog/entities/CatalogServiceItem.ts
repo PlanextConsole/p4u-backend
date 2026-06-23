@@ -12,10 +12,15 @@ export class CatalogServiceItem {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** FK to {@link ServiceCategory} — services belong only to service categories. */
+  /** FK to {@link ServiceCategory} root (legacy / denormalized parent). */
   @Column({ name: 'service_category_id', type: 'varchar', length: 36, nullable: true })
   @Index()
   serviceCategoryId!: string | null;
+
+  /** FK to {@link ServiceSubcategory} — preferred leaf taxonomy link (like product subcategory). */
+  @Column({ name: 'service_subcategory_id', type: 'varchar', length: 36, nullable: true })
+  @Index()
+  serviceSubcategoryId!: string | null;
 
   @Column({ type: 'varchar', length: 255 })
   @Index()

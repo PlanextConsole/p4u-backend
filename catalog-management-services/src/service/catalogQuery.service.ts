@@ -3,6 +3,7 @@ import { AppDataSource } from '../config/database';
 import { ProductCategory } from '../entities/ProductCategory';
 import { ProductSubcategory } from '../entities/ProductSubcategory';
 import { ServiceCategory } from '../entities/ServiceCategory';
+import { ServiceSubcategory } from '../entities/ServiceSubcategory';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { Product } from '../entities/Product';
 import { Vendor } from '../entities/Vendor';
@@ -70,6 +71,16 @@ export class CatalogQueryService {
     qb.andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true });
   }
 
+  /** Service browse: subcategory ids under a root service category. */
+  private async collectServiceSubcategoryIds(rootServiceCategoryId: string): Promise<string[]> {
+    const subRepo = AppDataSource.getRepository(ServiceSubcategory);
+    const subs = await subRepo.find({
+      where: { serviceCategoryId: rootServiceCategoryId },
+      select: ['id'],
+    });
+    return subs.map((s) => s.id);
+  }
+
   /** Product browse: root category id + all its product subcategory ids. */
   private async collectProductBrowseIds(rootProductCategoryId: string): Promise<string[]> {
     const subRepo = AppDataSource.getRepository(ProductSubcategory);
@@ -111,9 +122,27 @@ export class CatalogQueryService {
     }));
   }
 
-  /** Product: subcategories under a product category. Service: none (flat taxonomy). */
+  /** Product or service subcategories under a root category. */
   async listCategoryChildren(parentId: string, includeInactive: boolean, kind: CategoryKind): Promise<PublicCategory[]> {
-    if (kind === 'service') return [];
+    if (kind === 'service') {
+      const repo = AppDataSource.getRepository(ServiceSubcategory);
+      const qb = repo
+        .createQueryBuilder('s')
+        .where('s.serviceCategoryId = :parentId', { parentId })
+        .orderBy('s.sortOrder', 'ASC')
+        .addOrderBy('s.name', 'ASC');
+      if (!includeInactive) qb.andWhere('s.isActive = :a', { a: true });
+      const rows = await qb.getMany();
+      return rows.map((s) => normCategory({
+        id: s.id,
+        name: s.name,
+        parentId: s.serviceCategoryId,
+        thumbnailUrl: s.thumbnailUrl,
+        iconUrl: null,
+        bannerUrls: s.bannerUrls,
+        isActive: s.isActive,
+      }));
+    }
 
     const repo = AppDataSource.getRepository(ProductSubcategory);
     const qb = repo
@@ -241,15 +270,27 @@ export class CatalogQueryService {
 
     if (!includeInactive) qb.andWhere('s.isActive = :a', { a: true });
 
+    const sub = filters?.subcategoryId?.trim();
     const cat = filters?.categoryId?.trim();
-    if (cat) {
-      qb.andWhere('s.serviceCategoryId = :sc', { sc: cat });
+    if (sub) {
+      qb.andWhere('s.serviceSubcategoryId = :ssid', { ssid: sub });
+    } else if (cat) {
+      const subIds = await this.collectServiceSubcategoryIds(cat);
+      if (subIds.length) {
+        qb.andWhere(
+          '(s.serviceSubcategoryId IN (:...ssids) OR (s.serviceSubcategoryId IS NULL AND s.serviceCategoryId = :root))',
+          { ssids: subIds, root: cat },
+        );
+      } else {
+        qb.andWhere('s.serviceCategoryId = :root', { root: cat });
+      }
     }
 
     const [items, total] = await qb.getManyAndCount();
     return {
       items: items.map((s) => ({
         ...s,
+        categoryId: s.serviceSubcategoryId || s.serviceCategoryId,
         iconUrl: normalizeMediaUrl(s.iconUrl ?? null),
       })),
       total,
@@ -361,6 +402,16 @@ export class CatalogQueryService {
     if (!includeInactive) scQb.andWhere('c.isActive = :a', { a: true });
     const scats = await scQb.getMany();
     items.push(...scats.map((c) => ({ type: 'category', categoryKind: 'service', ...c })));
+
+    const ssQb = AppDataSource.getRepository(ServiceSubcategory)
+      .createQueryBuilder('s')
+      .where('s.name LIKE :like', { like })
+      .orderBy('s.sortOrder', 'ASC')
+      .addOrderBy('s.name', 'ASC')
+      .limit(paging.limit);
+    if (!includeInactive) ssQb.andWhere('s.isActive = :a', { a: true });
+    const ssubs = await ssQb.getMany();
+    items.push(...ssubs.map((s) => ({ type: 'subcategory', categoryKind: 'service', ...s })));
 
     const vendorsQb = AppDataSource.getRepository(Vendor)
       .createQueryBuilder('v')
