@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { jwtAuth, requireRole } from '../../middleware/authMiddleware';
@@ -11,24 +11,58 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
     const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname);
+    const ext = path.extname(file.originalname || '').toLowerCase() || '';
     cb(null, `${unique}${ext}`);
   },
 });
 
-const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|avif|heic|jfif)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|avif|heic|heif|jfif)$/i;
+const VIDEO_EXT = /\.(mp4|mov|webm|m4v|avi|mkv)$/i;
+const MAX_BYTES = 50 * 1024 * 1024;
+
+function isAllowedAdminUpload(file: Express.Multer.File): boolean {
+  const mime = (file.mimetype || '').toLowerCase();
+  const name = file.originalname || '';
+  const ext = path.extname(name).toLowerCase();
+  if (mime.startsWith('image/') || mime.startsWith('video/')) return true;
+  if (mime === 'application/pdf') return true;
+  if (IMAGE_EXT.test(name) || VIDEO_EXT.test(name)) return true;
+  if (ext === '.pdf') return true;
+  return false;
+}
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: { fileSize: MAX_BYTES },
   fileFilter: (_req, file, cb) => {
-    const mime = (file.mimetype || '').toLowerCase();
-    const mimeOk = mime.startsWith('image/') || mime === 'application/pdf';
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const extOk = IMAGE_EXT.test(file.originalname || '') || ext === '.pdf';
-    cb(null, mimeOk || extOk);
+    if (isAllowedAdminUpload(file)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error(`File type not allowed (${file.mimetype || file.originalname}). Use image, video, or PDF.`));
   },
 });
+
+function handleMulterSingle(field: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    upload.single(field)(req, res, (err: unknown) => {
+      if (!err) {
+        next();
+        return;
+      }
+      if (err instanceof multer.MulterError) {
+        const message =
+          err.code === 'LIMIT_FILE_SIZE'
+            ? `File too large (max ${Math.round(MAX_BYTES / (1024 * 1024))} MB)`
+            : err.message;
+        res.status(400).json({ message });
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      res.status(400).json({ message });
+    });
+  };
+}
 
 export const createUploadRoutes = (): Router => {
   const router = Router();
@@ -36,8 +70,7 @@ export const createUploadRoutes = (): Router => {
   router.use(jwtAuth);
   router.use(requireRole('ADMIN'));
 
-  // Single file upload
-  router.post('/upload', upload.single('file'), (req: Request, res: Response) => {
+  router.post('/upload', handleMulterSingle('file'), (req: Request, res: Response) => {
     const file = req.file;
     if (!file) {
       return res.status(400).json({ message: 'No file uploaded' });
@@ -46,8 +79,22 @@ export const createUploadRoutes = (): Router => {
     res.status(201).json({ url, filename: file.filename, originalName: file.originalname, size: file.size });
   });
 
-  // Multiple files upload (up to 5)
-  router.post('/upload/multiple', upload.array('files', 5), (req: Request, res: Response) => {
+  router.post('/upload/multiple', (req: Request, res: Response, next: NextFunction) => {
+    upload.array('files', 5)(req, res, (err: unknown) => {
+      if (err) {
+        if (err instanceof multer.MulterError) {
+          const message =
+            err.code === 'LIMIT_FILE_SIZE'
+              ? `File too large (max ${Math.round(MAX_BYTES / (1024 * 1024))} MB)`
+              : err.message;
+          return res.status(400).json({ message });
+        }
+        const message = err instanceof Error ? err.message : 'Upload failed';
+        return res.status(400).json({ message });
+      }
+      next();
+    });
+  }, (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) {
       return res.status(400).json({ message: 'No files uploaded' });
