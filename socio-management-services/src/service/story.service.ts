@@ -4,6 +4,7 @@ import { UserFollow } from '../entities/UserFollow';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { CustomerProfile } from '../entities/CustomerProfile';
 import { deleteMediaByIds } from '../service/socialMediaStorage.service';
+import { resolveAuthor, resolveAuthorMap, withAuthor } from '../service/authorProfile.service';
 import { normalizeMediaUrl } from '../util/normalizeMediaUrl';
 import { SocioRewardPointsService } from './socioRewardPoints.service';
 
@@ -18,7 +19,7 @@ export class StoryService {
   async createStory(authorId: string, data: { mediaUrl: string; mediaType?: string; textOverlay?: string }) {
     const repo = AppDataSource.getRepository(Story);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    return repo.save(
+    const saved = await repo.save(
       repo.create({
         authorId,
         mediaUrl: normalizeMediaUrl(data.mediaUrl) ?? data.mediaUrl,
@@ -28,6 +29,8 @@ export class StoryService {
         status: 'active',
       })
     );
+    const author = await resolveAuthor(authorId);
+    return { ...saved, mediaUrl: normalizeMediaUrl(saved.mediaUrl) ?? saved.mediaUrl, ...author };
   }
 
   async getFeedStories(userId: string) {
@@ -40,27 +43,36 @@ export class StoryService {
       .where('f.follower_id = :userId', { userId })
       .getRawMany();
 
-    const ids = followingIds.map((r) => r.followingId);
-    if (ids.length === 0) return [];
+    // Include the viewer's own active stories so a freshly posted story shows in
+    // the rail immediately, alongside the stories of people they follow.
+    const ids = [...new Set([userId, ...followingIds.map((r) => r.followingId)])];
 
-    return AppDataSource.getRepository(Story)
+    const rows = await AppDataSource.getRepository(Story)
       .createQueryBuilder('s')
       .where('s.author_id IN (:...ids)', { ids })
       .andWhere('s.expires_at > :now', { now: new Date() })
       .andWhere('s.status = :status', { status: 'active' })
       .orderBy('s.created_at', 'DESC')
-      .getMany()
-      .then((rows) =>
-        rows.map((s) => ({ ...s, mediaUrl: normalizeMediaUrl(s.mediaUrl) ?? s.mediaUrl })),
-      );
+      .getMany();
+
+    const map = await resolveAuthorMap(rows.map((r) => r.authorId));
+    return rows.map((s) =>
+      withAuthor({ ...s, mediaUrl: normalizeMediaUrl(s.mediaUrl) ?? s.mediaUrl }, s.authorId, map),
+    );
   }
 
   async getMyStories(userId: string) {
-    const rows = await AppDataSource.getRepository(Story).find({
-      where: { authorId: userId, status: 'active' },
-      order: { createdAt: 'DESC' },
-    });
-    return rows.map((s) => ({ ...s, mediaUrl: normalizeMediaUrl(s.mediaUrl) ?? s.mediaUrl }));
+    // Only non-expired stories — expired ones must not show in the UI.
+    await this.expireOldStories();
+    const rows = await AppDataSource.getRepository(Story)
+      .createQueryBuilder('s')
+      .where('s.author_id = :userId', { userId })
+      .andWhere('s.expires_at > :now', { now: new Date() })
+      .andWhere('s.status = :status', { status: 'active' })
+      .orderBy('s.created_at', 'DESC')
+      .getMany();
+    const author = await resolveAuthor(userId);
+    return rows.map((s) => ({ ...s, mediaUrl: normalizeMediaUrl(s.mediaUrl) ?? s.mediaUrl, ...author }));
   }
 
   /**

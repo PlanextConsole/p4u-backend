@@ -4,6 +4,7 @@ import { PostComment } from '../entities/PostComment';
 import { UserFollow } from '../entities/UserFollow';
 import { SocialPost } from '../entities/SocialPost';
 import { SocioRewardPointsService } from './socioRewardPoints.service';
+import { resolveAuthor, resolveAuthorMap, withAuthor } from './authorProfile.service';
 
 export class InteractionService {
   private rewardPoints = new SocioRewardPointsService();
@@ -78,16 +79,20 @@ export class InteractionService {
     const postRepo = AppDataSource.getRepository(SocialPost);
     await postRepo.increment({ id: postId }, 'commentCount', 1);
 
-    return comment;
+    // Return with author info so the new comment renders the name immediately.
+    const author = await resolveAuthor(userId);
+    return { ...comment, ...author };
   }
 
   async listComments(postId: string, limit: number, offset: number) {
-    return AppDataSource.getRepository(PostComment).findAndCount({
-      where: { postId },
+    const [rows, total] = await AppDataSource.getRepository(PostComment).findAndCount({
+      where: { postId, status: 'published' },
       order: { createdAt: 'ASC' },
       skip: offset,
       take: limit,
     });
+    const map = await resolveAuthorMap(rows.map((r) => r.userId));
+    return [rows.map((r) => withAuthor(r, r.userId, map)), total] as const;
   }
 
   async followUser(followerId: string, followingId: string) {

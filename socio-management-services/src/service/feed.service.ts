@@ -2,7 +2,14 @@ import { AppDataSource } from '../config/database';
 import { SocialPost } from '../entities/SocialPost';
 import { UserFollow } from '../entities/UserFollow';
 import { deleteMediaByIds } from '../service/socialMediaStorage.service';
+import { resolveAuthor, resolveAuthorMap, withAuthor } from '../service/authorProfile.service';
 import { normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
+
+/** Attaches userName/userAvatar to a list of posts in a single profile lookup. */
+async function withAuthors<T extends { authorId: string }>(rows: T[]): Promise<Array<T & { userName: string; userAvatar: string | null }>> {
+  const map = await resolveAuthorMap(rows.map((r) => r.authorId));
+  return rows.map((r) => withAuthor(r, r.authorId, map));
+}
 
 /**
  * Extracts media ids from a `/socio-uploads/media/{id}` URL. Returns null for
@@ -37,7 +44,7 @@ export class FeedService {
     if (data.location?.trim()) metadata.location = data.location.trim();
     if (data.tags?.length) metadata.tags = data.tags.map((t) => t.trim()).filter(Boolean);
 
-    return repo.save(
+    const saved = await repo.save(
       repo.create({
         authorId,
         authorType,
@@ -49,6 +56,9 @@ export class FeedService {
         metadata: Object.keys(metadata).length ? metadata : null,
       }),
     );
+    // Return with author info so the new post renders the name/avatar immediately.
+    const author = await resolveAuthor(authorId);
+    return { ...withNormalizedMedia(saved), ...author };
   }
 
   async getTrendingTags(limit: number): Promise<Array<{ tag: string; postCount: number }>> {
@@ -102,7 +112,9 @@ export class FeedService {
 
   async getPost(postId: string) {
     const row = await AppDataSource.getRepository(SocialPost).findOne({ where: { id: postId } });
-    return row ? withNormalizedMedia(row) : null;
+    if (!row) return null;
+    const author = await resolveAuthor(row.authorId);
+    return { ...withNormalizedMedia(row), ...author };
   }
 
   async getFeed(userId: string, limit: number, offset: number) {
@@ -115,15 +127,15 @@ export class FeedService {
     const ids = followingIds.map((r) => r.followingId);
     if (ids.length === 0) return [];
 
-    return AppDataSource.getRepository(SocialPost)
+    const rows = await AppDataSource.getRepository(SocialPost)
       .createQueryBuilder('p')
       .where('p.author_id IN (:...ids)', { ids })
       .andWhere('p.status = :status', { status: 'published' })
       .orderBy('p.created_at', 'DESC')
       .skip(offset)
       .take(limit)
-      .getMany()
-      .then((rows) => rows.map(withNormalizedMedia));
+      .getMany();
+    return withAuthors(rows.map(withNormalizedMedia));
   }
 
   async getPublicFeed(limit: number, offset: number) {
@@ -133,7 +145,7 @@ export class FeedService {
       skip: offset,
       take: limit,
     });
-    return rows.map(withNormalizedMedia);
+    return withAuthors(rows.map(withNormalizedMedia));
   }
 
   async getUserPosts(userId: string, limit: number, offset: number) {
@@ -143,7 +155,7 @@ export class FeedService {
       skip: offset,
       take: limit,
     });
-    return rows.map(withNormalizedMedia);
+    return withAuthors(rows.map(withNormalizedMedia));
   }
 
   async deletePost(authorId: string, postId: string) {
