@@ -8,6 +8,7 @@ import { DiscoveryRegistration } from './service/discoveryRegistration';
 import { AppDataSource } from './config/database';
 import { ensureSocioUploadDir } from './config/uploadPaths';
 import { repairAndMigrateSocioMedia } from './config/repairSocioMediaStorage';
+import { ensureSocioSchema } from './config/ensureSocioSchema';
 
 dotenv.config();
 
@@ -54,6 +55,7 @@ process.on('SIGINT', shutdown);
 async function startServer() {
   try {
     await AppDataSource.initialize();
+    await ensureSocioSchema();
     await repairAndMigrateSocioMedia();
     app.listen(PORT, async () => {
       try {

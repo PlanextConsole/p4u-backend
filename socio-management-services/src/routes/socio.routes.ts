@@ -2,12 +2,31 @@ import { Router, Request, Response } from 'express';
 import { FeedService } from '../service/feed.service';
 import { InteractionService } from '../service/interaction.service';
 import { StoryService } from '../service/story.service';
+import { SocioProfileService } from '../service/socioProfile.service';
 import { jwtAuth, requireAnyRole, requirePermission } from '../middleware/authMiddleware';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest } from '../middleware/responseEnvelope';
 
 const userIdFromAuth = (req: Request): string | null => {
   const auth = (req as any).auth;
   return String(auth?.sub || '').trim() || null;
+};
+
+const authorTypeFromAuth = (req: Request): string => {
+  const roles: string[] = Array.isArray((req as any).auth?.roles) ? (req as any).auth.roles : [];
+  const upper = roles.map((r) => String(r).toUpperCase());
+  if (upper.includes('VENDOR')) return 'vendor';
+  if (upper.includes('ADMIN')) return 'admin';
+  return 'customer';
+};
+
+const handleInteractionError = (res: Response, err: unknown): boolean => {
+  const statusCode = (err as Error & { statusCode?: number })?.statusCode;
+  const message = err instanceof Error ? err.message : 'Request failed';
+  if (statusCode === 404) {
+    sendNotFound(res, message);
+    return true;
+  }
+  return false;
 };
 
 const parsePaging = (req: Request) => {
@@ -24,6 +43,7 @@ export function createSocioRoutes(): Router {
   const feedSvc = new FeedService();
   const interactionSvc = new InteractionService();
   const storySvc = new StoryService();
+  const profileSvc = new SocioProfileService();
 
   /* ───── public health ───── */
   router.get('/public/health', (_req: Request, res: Response) => {
@@ -46,8 +66,9 @@ export function createSocioRoutes(): Router {
       const userId = userIdFromAuth(req);
       if (!userId) return sendBadRequest(res, 'user id missing in token');
       const { limit, offset } = parsePaging(req);
-      const rows = await feedSvc.getFeed(userId, limit, offset);
-      sendSuccess(res, rows);
+      const rows = await feedSvc.getFeedWithFallback(userId, limit, offset);
+      const enriched = await interactionSvc.attachPostFlags(userId, rows);
+      sendSuccess(res, enriched);
     }
   );
 
@@ -58,7 +79,24 @@ export function createSocioRoutes(): Router {
     async (req: Request, res: Response) => {
       const { limit, offset } = parsePaging(req);
       const rows = await feedSvc.getPublicFeed(limit, offset);
-      sendSuccess(res, rows);
+      const viewerId = userIdFromAuth(req);
+      const enriched = viewerId ? await interactionSvc.attachPostFlags(viewerId, rows) : rows;
+      sendSuccess(res, enriched);
+    }
+  );
+
+  router.get(
+    '/posts/saved',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const { limit, offset } = parsePaging(req);
+      const [posts, total] = await interactionSvc.listSavedPosts(userId, limit, offset);
+      const formatted = await feedSvc.formatPosts(posts);
+      const enriched = await interactionSvc.attachPostFlags(userId, formatted);
+      sendSuccess(res, enriched, 200, { total, limit, offset });
     }
   );
 
@@ -111,7 +149,7 @@ export function createSocioRoutes(): Router {
         : typeof tags === 'string'
           ? tags.split(/[,\s#]+/).map((t) => t.trim()).filter(Boolean)
           : undefined;
-      const post = await feedSvc.createPost(userId, 'customer', {
+      const post = await feedSvc.createPost(userId, authorTypeFromAuth(req), {
         contentText,
         mediaUrls,
         postType,
@@ -144,8 +182,13 @@ export function createSocioRoutes(): Router {
     async (req: Request, res: Response) => {
       const userId = userIdFromAuth(req);
       if (!userId) return sendBadRequest(res, 'user id missing in token');
-      const like = await interactionSvc.likePost(userId, req.params.postId);
-      sendCreated(res, like);
+      try {
+        const like = await interactionSvc.likePost(userId, req.params.postId);
+        sendCreated(res, like);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
     }
   );
 
@@ -170,8 +213,43 @@ export function createSocioRoutes(): Router {
     async (req: Request, res: Response) => {
       const userId = userIdFromAuth(req);
       if (!userId) return sendBadRequest(res, 'user id missing in token');
-      const result = await interactionSvc.sharePost(userId, req.params.postId);
-      sendCreated(res, result);
+      try {
+        const result = await interactionSvc.sharePost(userId, req.params.postId);
+        sendCreated(res, result);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
+    }
+  );
+
+  router.post(
+    '/posts/:postId/save',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const saved = await interactionSvc.savePost(userId, req.params.postId);
+        sendCreated(res, saved);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
+    }
+  );
+
+  router.delete(
+    '/posts/:postId/save',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const removed = await interactionSvc.unsavePost(userId, req.params.postId);
+      if (!removed) return sendNotFound(res, 'Save not found');
+      sendSuccess(res, { message: 'Unsaved' });
     }
   );
 
@@ -198,6 +276,57 @@ export function createSocioRoutes(): Router {
       if (!contentText) return sendBadRequest(res, 'contentText is required');
       const comment = await interactionSvc.addComment(userId, req.params.postId, { contentText, parentCommentId });
       sendCreated(res, comment);
+    }
+  );
+
+  router.get(
+    '/users/me/profile',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const profile = await profileSvc.getProfile(userId, userId);
+      sendSuccess(res, profile);
+    }
+  );
+
+  router.get(
+    '/users/:userId/profile',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const viewerId = userIdFromAuth(req);
+      if (!viewerId) return sendBadRequest(res, 'user id missing in token');
+      const profile = await profileSvc.getProfile(viewerId, req.params.userId);
+      sendSuccess(res, profile);
+    }
+  );
+
+  router.get(
+    '/users/:userId/posts',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const viewerId = userIdFromAuth(req);
+      const { limit, offset } = parsePaging(req);
+      const rows = await feedSvc.getUserPosts(req.params.userId, limit, offset);
+      const enriched = viewerId ? await interactionSvc.attachPostFlags(viewerId, rows) : rows;
+      sendSuccess(res, enriched);
+    }
+  );
+
+  router.get(
+    '/notifications/me',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const limitRaw = parseInt(String(req.query.limit ?? '30'), 10);
+      const limit = Number.isNaN(limitRaw) ? 30 : Math.min(Math.max(limitRaw, 1), 100);
+      const items = await interactionSvc.getActivityNotifications(userId, limit);
+      sendSuccess(res, items);
     }
   );
 

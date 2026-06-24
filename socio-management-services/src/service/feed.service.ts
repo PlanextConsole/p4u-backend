@@ -124,9 +124,7 @@ export class FeedService {
       .where('f.follower_id = :userId', { userId })
       .getRawMany();
 
-    const ids = followingIds.map((r) => r.followingId);
-    if (ids.length === 0) return [];
-
+    const ids = [userId, ...followingIds.map((r) => r.followingId)];
     const rows = await AppDataSource.getRepository(SocialPost)
       .createQueryBuilder('p')
       .where('p.author_id IN (:...ids)', { ids })
@@ -136,6 +134,13 @@ export class FeedService {
       .take(limit)
       .getMany();
     return withAuthors(rows.map(withNormalizedMedia));
+  }
+
+  /** Personalized feed; falls back to public posts when the user follows nobody yet. */
+  async getFeedWithFallback(userId: string, limit: number, offset: number) {
+    const personalized = await this.getFeed(userId, limit, offset);
+    if (personalized.length > 0) return personalized;
+    return this.getPublicFeed(limit, offset);
   }
 
   async getPublicFeed(limit: number, offset: number) {
@@ -150,7 +155,7 @@ export class FeedService {
 
   async getUserPosts(userId: string, limit: number, offset: number) {
     const rows = await AppDataSource.getRepository(SocialPost).find({
-      where: { authorId: userId },
+      where: { authorId: userId, status: 'published' },
       order: { createdAt: 'DESC' },
       skip: offset,
       take: limit,
@@ -177,5 +182,10 @@ export class FeedService {
       post.status = 'deleted';
       return repo.save(post);
     });
+  }
+
+  /** Normalize media URLs and attach author display fields. */
+  async formatPosts(rows: SocialPost[]) {
+    return withAuthors(rows.map(withNormalizedMedia));
   }
 }
