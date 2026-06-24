@@ -1,3 +1,5 @@
+import axios from 'axios';
+import * as crypto from 'crypto';
 import { AppDataSource } from '../config/database';
 import { Vendor } from '../entities/Vendor';
 import { Order } from '../entities/Order';
@@ -225,6 +227,105 @@ export class VendorPortalService {
       maxRedemptionPercent: v.maxRedemptionPercent ?? plan?.maxUserRedemptionPercent ?? '0',
     };
     return { vendor: v, plan, effective };
+  }
+
+  // ─── Plan selection + Razorpay checkout ───
+
+  private razorpayConfig(): { keyId: string; keySecret: string } {
+    const keyId = (process.env.RAZORPAY_KEY_ID || '').trim();
+    const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+    if (!keyId || !keySecret) {
+      throw new Error(
+        'Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the environment.',
+      );
+    }
+    return { keyId, keySecret };
+  }
+
+  /** All selectable plans for the Plans & Payments screen, cheapest tier first. */
+  async listSelectablePlans(): Promise<VendorPlan[]> {
+    return AppDataSource.getRepository(VendorPlan).find({
+      order: { tier: 'ASC', price: 'ASC' },
+    });
+  }
+
+  private async assignPlan(vendorId: string, planId: string, paid: boolean): Promise<Vendor> {
+    const repo = AppDataSource.getRepository(Vendor);
+    const row = await repo.findOne({ where: { id: vendorId } });
+    if (!row) throw new Error('Vendor not found');
+    row.vendorPlanId = planId;
+    row.membershipStatus = paid ? 'paid' : 'active';
+    return repo.save(row);
+  }
+
+  /**
+   * Begin a plan purchase. Free plans (price <= 0) are assigned immediately.
+   * Paid plans return a Razorpay order the browser opens in Checkout; the plan
+   * id is stored in the order notes so it can't be swapped at verify time.
+   */
+  async createPlanOrder(
+    vendorId: string,
+    planId: string,
+  ): Promise<
+    | { free: true; plan: VendorPlan }
+    | { free: false; keyId: string; orderId: string; amount: number; currency: string; plan: VendorPlan }
+  > {
+    const plan = await AppDataSource.getRepository(VendorPlan).findOne({ where: { id: planId } });
+    if (!plan) throw new Error('Plan not found');
+
+    const price = Number(plan.price);
+    if (!Number.isFinite(price) || price <= 0) {
+      await this.assignPlan(vendorId, planId, false);
+      return { free: true, plan };
+    }
+
+    const { keyId, keySecret } = this.razorpayConfig();
+    const amount = Math.round(price * 100); // paise
+    const receipt = `plan_${planId.slice(0, 8)}_${Date.now()}`.slice(0, 40);
+    const resp = await axios.post(
+      'https://api.razorpay.com/v1/orders',
+      { amount, currency: 'INR', receipt, notes: { planId, vendorId } },
+      { auth: { username: keyId, password: keySecret } },
+    );
+    const orderId = String(resp.data?.id || '');
+    if (!orderId) throw new Error('Failed to create payment order');
+    return { free: false, keyId, orderId, amount, currency: 'INR', plan };
+  }
+
+  /**
+   * Verify a Razorpay payment and, only if the signature and the server-side
+   * order (amount + plan id from notes) check out, assign the plan to the vendor.
+   */
+  async verifyPlanPayment(
+    vendorId: string,
+    planId: string,
+    orderId: string,
+    paymentId: string,
+    signature: string,
+  ): Promise<{ verified: boolean; planInfo?: unknown }> {
+    const { keyId, keySecret } = this.razorpayConfig();
+
+    const expected = crypto
+      .createHmac('sha256', keySecret)
+      .update(`${orderId}|${paymentId}`)
+      .digest('hex');
+    if (expected !== signature) return { verified: false };
+
+    // Re-fetch the order so the amount and plan id can't be tampered with client-side.
+    const orderResp = await axios.get(`https://api.razorpay.com/v1/orders/${orderId}`, {
+      auth: { username: keyId, password: keySecret },
+    });
+    const order = orderResp.data || {};
+    const notesPlanId = String(order?.notes?.planId || '');
+    if (notesPlanId !== planId) return { verified: false };
+
+    const plan = await AppDataSource.getRepository(VendorPlan).findOne({ where: { id: planId } });
+    if (!plan) return { verified: false };
+    if (Math.round(Number(plan.price) * 100) !== Number(order.amount)) return { verified: false };
+
+    await this.assignPlan(vendorId, planId, true);
+    const planInfo = await this.getVendorPlanInfo(vendorId);
+    return { verified: true, planInfo };
   }
 
   async listSettlementsForVendor(

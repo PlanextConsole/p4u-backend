@@ -236,6 +236,19 @@ export class PhoneAuthService {
   }
 
   /**
+   * Lightweight pre-OTP check for vendor-web: does a registered vendor account
+   * already exist for this phone? Lets the login screen avoid sending an SMS OTP
+   * to a number that has no vendor account (it routes them to registration
+   * instead). DB-only — no Firebase / Keycloak round-trip.
+   */
+  async vendorPhoneStatus(phone: string): Promise<{ registered: boolean }> {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length < 10) return { registered: false };
+    const vendor = await this.catalogVendorRepo.findByPhone(digits);
+    return { registered: Boolean(vendor && vendor.keycloakUserId) };
+  }
+
+  /**
    * Step 2 (customer): consume the registration token + profile fields, create
    * a Keycloak user (no real password), insert customer_profiles row, mint
    * tokens.

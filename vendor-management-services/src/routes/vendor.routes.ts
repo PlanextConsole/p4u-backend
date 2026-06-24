@@ -382,6 +382,67 @@ export function createVendorRoutes(): Router {
     }
   );
 
+  // List selectable plans for the Plans & Payments screen (radio options).
+  router.get(
+    '/me/plans',
+    requirePermission('vendor.portal.me.read'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const items = await svc.listSelectablePlans();
+      sendSuccess(res, { items });
+    }
+  );
+
+  // Start a plan purchase: free plans are assigned immediately; paid plans
+  // return a Razorpay order the browser opens in Checkout.
+  router.post(
+    '/me/plan/checkout',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const planId = String(req.body?.planId || '').trim();
+      if (!planId) return sendBadRequest(res, 'planId is required');
+      try {
+        const result = await svc.createPlanOrder(vendorId, planId);
+        sendSuccess(res, result);
+      } catch (e: any) {
+        sendBadRequest(res, e?.message || 'Failed to start checkout');
+      }
+    }
+  );
+
+  // Verify a Razorpay payment and assign the plan on success.
+  router.post(
+    '/me/plan/verify',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const planId = String(req.body?.planId || '').trim();
+      const razorpay_order_id = String(req.body?.razorpay_order_id || '').trim();
+      const razorpay_payment_id = String(req.body?.razorpay_payment_id || '').trim();
+      const razorpay_signature = String(req.body?.razorpay_signature || '').trim();
+      if (!planId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        return sendBadRequest(res, 'planId and Razorpay order/payment/signature are required');
+      }
+      try {
+        const result = await svc.verifyPlanPayment(
+          vendorId,
+          planId,
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature,
+        );
+        if (!result.verified) return sendBadRequest(res, 'Payment verification failed');
+        sendSuccess(res, result);
+      } catch (e: any) {
+        sendBadRequest(res, e?.message || 'Failed to verify payment');
+      }
+    }
+  );
+
   // ─── Service vendor: catalog taxonomy + per-vendor offerings (catalog_vendor_services) ───
   router.get(
     '/me/catalog/service-categories',

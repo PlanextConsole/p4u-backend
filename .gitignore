@@ -51,3 +51,8 @@ Desktop.ini
 
 # Cursor / local agent (optional)
 .claude/
+
+# Separate frontend repos (each has its own Git remote — do not track in p4u-backend)
+p4u-admin-web/
+p4u-new-user-web/
+p4u-new-vendor-web/

@@ -147,6 +147,28 @@ export const createAuthRoutes = (
   );
 
   /**
+   * Pre-OTP vendor registration check. Vendor-web calls this before sending an
+   * SMS OTP so an unregistered number is routed to the signup wizard instead of
+   * burning an OTP. Body: { phone: string }. Returns { registered: boolean }.
+   */
+  router.post(
+    '/public/vendor/phone-status',
+    publicLoginLimiter,
+    async (req: Request, res: Response) => {
+      try {
+        const phone = typeof req.body?.phone === 'string' ? req.body.phone : '';
+        if (!phone.trim()) {
+          return res.status(400).json({ message: 'Phone number is required' });
+        }
+        const result = await phoneAuthService.vendorPhoneStatus(phone);
+        return res.json(result);
+      } catch (error: any) {
+        return res.status(400).json({ message: mapCaughtErrorToMessage(error) });
+      }
+    },
+  );
+
+  /**
    * OTP-LAST vendor signup. The vendor-web wizard collects every business
    * field first, runs Firebase phone verification at submit time, then posts
    * the resulting ID token alongside the full payload here. We create the
