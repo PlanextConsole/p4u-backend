@@ -8,7 +8,6 @@ import { jwtAuth, requireRole, requirePermission } from '../../middleware/authMi
 import { getAuthSub, clientIp, parseLimitOffset } from '../../http/adminHttp';
 import { MediaLibraryAdminService } from './media-library.service';
 import { CreateMediaFolderDto } from './dto/create-media-folder.dto';
-import { B2ImportDto } from './dto/b2-import.dto';
 import { adminUploadRoot, ensureAdminUploadDir } from '../../config/uploadPaths';
 
 ensureAdminUploadDir();
@@ -152,54 +151,6 @@ export function createMediaLibraryAdminRoutes(): Router {
     } catch (e: any) {
       const st = e.message === 'Asset not found' ? 404 : 400;
       res.status(st).json({ message: e.message });
-    }
-  });
-
-  r.get('/media-library/b2/status', (_req: Request, res: Response) => {
-    res.json({ configured: svc.isB2Ready() });
-  });
-
-  r.get('/media-library/b2/browse', async (req: Request, res: Response) => {
-    try {
-      const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
-      const data = await svc.browseB2(prefix);
-      res.json(data);
-    } catch (e: any) {
-      res.status(svc.isB2Ready() ? 500 : 503).json({ message: e.message });
-    }
-  });
-
-  r.post('/media-library/b2/import', async (req: Request, res: Response) => {
-    try {
-      const dto = plainToClass(B2ImportDto, req.body);
-      const errors = await validate(dto);
-      if (errors.length) {
-        const msgs = errors.map(er => Object.values(er.constraints || {})).flat();
-        return res.status(400).json({ message: msgs.join(', ') });
-      }
-      const { imported } = await svc.importB2Keys(dto.keys, dto.folderId);
-      res.status(201).json({ imported });
-    } catch (e: any) {
-      res.status(400).json({ message: e.message });
-    }
-  });
-
-  r.get('/media-library/migrate/candidates', async (req: Request, res: Response) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req, { limit: 50, maxLimit: 200 });
-      const data = await svc.listMigrateCandidates(limit, offset);
-      res.json({ ...data, limit, offset });
-    } catch (e: any) {
-      res.status(500).json({ message: e.message });
-    }
-  });
-
-  r.post('/media-library/assets/:id/migrate-to-b2', async (req: Request, res: Response) => {
-    try {
-      const row = await svc.migrateAssetToB2(req.params.id);
-      res.json(row);
-    } catch (e: any) {
-      res.status(400).json({ message: e.message });
     }
   });
 

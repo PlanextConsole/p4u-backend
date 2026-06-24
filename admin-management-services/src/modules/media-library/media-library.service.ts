@@ -6,7 +6,6 @@ import { AppDataSource } from '../../config/database';
 import { AuditService } from '../admin-core/services/audit.service';
 import { MediaLibraryFolder } from './entities/MediaLibraryFolder';
 import { MediaLibraryAsset } from './entities/MediaLibraryAsset';
-import { MediaLibraryB2Service, isB2Configured, publicFileUrlForKey } from './media-library-b2.service';
 import { adminUploadRoot, adminUploadPublicUrl } from '../../config/uploadPaths';
 
 const UPLOAD_DIR = adminUploadRoot();
@@ -47,7 +46,6 @@ function mimeFromName(filename: string): string {
 
 export class MediaLibraryAdminService {
   private audit = new AuditService();
-  private b2 = new MediaLibraryB2Service();
 
   private folderRepo() {
     return AppDataSource.getRepository(MediaLibraryFolder);
@@ -118,17 +116,6 @@ export class MediaLibraryAdminService {
     const repo = this.assetRepo();
     const [items, total] = await repo.findAndCount({
       where: { folderId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: offset,
-    });
-    return { items, total };
-  }
-
-  async listMigrateCandidates(limit: number, offset: number): Promise<{ items: MediaLibraryAsset[]; total: number }> {
-    const repo = this.assetRepo();
-    const [items, total] = await repo.findAndCount({
-      where: { storageKind: 'local' },
       order: { createdAt: 'DESC' },
       take: limit,
       skip: offset,
@@ -220,74 +207,5 @@ export class MediaLibraryAdminService {
       created++;
     }
     return { created };
-  }
-
-  async importB2Keys(keys: string[], folderId: string): Promise<{ imported: number }> {
-    if (!isB2Configured()) throw new Error('B2 not configured');
-    const folder = await this.getFolder(folderId);
-    if (!folder) throw new Error('Folder not found');
-    const destBase = path.join(UPLOAD_DIR, 'media-library', folderId);
-    fs.mkdirSync(destBase, { recursive: true });
-    let imported = 0;
-    for (const key of keys) {
-      if (!key || key.endsWith('/')) continue;
-      const baseName = sanitizeFilename(path.basename(key));
-      const diskName = `${Date.now()}-${imported}-${baseName}`;
-      const abs = path.join(destBase, diskName);
-      await this.b2.downloadObjectToFile(key, abs);
-      const stat = fs.statSync(abs);
-      const rel = path.join('media-library', folderId, diskName).replace(/\\/g, '/');
-      const row = this.assetRepo().create({
-        id: randomUUID(),
-        folderId,
-        originalName: baseName,
-        fileUrl: adminUploadPublicUrl(rel),
-        relativePath: rel,
-        mime: mimeFromName(baseName),
-        sizeBytes: String(stat.size),
-        storageKind: 'local',
-        b2Key: key,
-      });
-      await this.assetRepo().save(row);
-      imported++;
-    }
-    return { imported };
-  }
-
-  async migrateAssetToB2(assetId: string): Promise<MediaLibraryAsset> {
-    if (!isB2Configured()) throw new Error('B2 not configured');
-    const pubBase = process.env.B2_PUBLIC_FILE_BASE?.trim();
-    if (!pubBase) throw new Error('Set B2_PUBLIC_FILE_BASE to the public URL prefix for files in this bucket (e.g. https://f003.backblazeb2.com/file/your-bucket).');
-    const repo = this.assetRepo();
-    const row = await repo.findOne({ where: { id: assetId } });
-    if (!row) throw new Error('Asset not found');
-    if (row.storageKind === 'b2') return row;
-    if (row.storageKind !== 'local' || !row.relativePath) throw new Error('Only local files can be migrated');
-    const abs = path.join(UPLOAD_DIR, row.relativePath);
-    if (!fs.existsSync(abs)) throw new Error('Local file missing on disk');
-    const folder = await this.getFolder(row.folderId);
-    if (!folder) throw new Error('Folder missing');
-    const b2Key = `media-library/${folder.slug}/${row.id}-${sanitizeFilename(row.originalName)}`;
-    await this.b2.uploadFileToKey(abs, b2Key, row.mime);
-    const nextUrl = publicFileUrlForKey(b2Key);
-    row.storageKind = 'b2';
-    row.b2Key = b2Key;
-    row.fileUrl = nextUrl || row.fileUrl;
-    row.relativePath = `b2:${b2Key}`.slice(0, 512);
-    await repo.save(row);
-    try {
-      fs.unlinkSync(abs);
-    } catch {
-      /* ignore */
-    }
-    return row;
-  }
-
-  browseB2(prefix: string) {
-    return this.b2.browse(prefix);
-  }
-
-  isB2Ready(): boolean {
-    return isB2Configured();
   }
 }
