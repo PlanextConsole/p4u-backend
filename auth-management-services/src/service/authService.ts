@@ -392,6 +392,14 @@ export class AuthService {
     params.append('grant_type', grantType);
     params.append('client_id', this.clientId);
     params.append('client_secret', this.clientSecret);
+    // Request an OFFLINE refresh token so the session survives browser close and
+    // Keycloak SSO idle timeout. Without `offline_access` the refresh token is an
+    // online token bound to the SSO session, which dies on idle (~30m default) —
+    // that is why users were logged out after closing and reopening the browser.
+    // Offline tokens live until the offline-session timeout or explicit logout.
+    // NOTE: the Keycloak client must have `offline_access` as a default/optional
+    // client scope, otherwise this scope is silently ignored.
+    params.append('scope', 'openid offline_access');
     if (username) params.append('username', username);
     if (password) params.append('password', password);
     if (refreshToken) params.append('refresh_token', refreshToken);

@@ -745,6 +745,10 @@ export class PhoneAuthService {
     params.append('grant_type', 'password');
     params.append('client_id', this.clientId);
     params.append('client_secret', this.clientSecret);
+    // Request an OFFLINE refresh token so the phone-OTP session persists across
+    // browser close (same rationale as authService.getToken). Requires the
+    // Keycloak client to expose `offline_access` as a default/optional scope.
+    params.append('scope', 'openid offline_access');
     params.append('username', user.username);
     params.append('password', oneTimePassword);
 
