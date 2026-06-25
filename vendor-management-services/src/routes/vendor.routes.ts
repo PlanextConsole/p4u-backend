@@ -872,6 +872,26 @@ export function createVendorRoutes(): Router {
     },
   );
 
+  router.patch(
+    '/me/media/assets/:assetId',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const folderId = String((req.body as { folderId?: string })?.folderId || '').trim();
+      if (!folderId) return sendBadRequest(res, 'folderId is required');
+      try {
+        const row = await mediaSvc.moveAsset(vendorId, req.params.assetId, folderId);
+        sendSuccess(res, row);
+      } catch (e: any) {
+        if (e.message === 'Asset not found' || e.message === 'Folder not found') {
+          return sendNotFound(res, e.message);
+        }
+        sendBadRequest(res, e?.message || 'Move failed');
+      }
+    },
+  );
+
   router.delete(
     '/me/media/assets/:assetId',
     requirePermission('vendor.portal.me.write'),

@@ -6,6 +6,7 @@ import { VendorReview } from '../entities/VendorReview';
 import { VendorRegistrationRequest } from '../entities/VendorRegistrationRequest';
 import { VendorPlan } from '../entities/VendorPlan';
 import { Product } from '../entities/Product';
+import { ProductVariation } from '../entities/ProductVariation';
 import { ProductCategory } from '../entities/ProductCategory';
 import { Settlement } from '../entities/Settlement';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
@@ -34,6 +35,7 @@ export const AppDataSource = new DataSource({
     VendorRegistrationRequest,
     VendorPlan,
     Product,
+    ProductVariation,
     ProductCategory,
     Settlement,
     CatalogServiceItem,

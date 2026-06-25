@@ -11,10 +11,20 @@ import { PricingService, type CartPricingBreakdown } from './pricing.service';
 export type CartLineInput = {
   productId: string;
   vendorId?: string | null;
+  variationId?: string | null;
   quantity: number;
   unitPrice: string | number;
   metadata?: Record<string, unknown> | null;
 };
+
+function normalizeVariationId(v: string | null | undefined): string | null {
+  if (v === undefined || v === null || String(v).trim() === '') return null;
+  return String(v).trim();
+}
+
+function cartLineKey(productId: string, vendorId: string | null, variationId: string | null): string {
+  return `${productId}::${vendorId ?? ''}::${variationId ?? ''}`;
+}
 
 function normalizeVendorId(v: string | null | undefined): string | null {
   if (v === undefined || v === null || String(v).trim() === '') return null;
@@ -81,6 +91,7 @@ export class CartService {
       id: i.id,
       productId: i.productId,
       vendorId: i.vendorId,
+      variationId: i.variationId ?? null,
       quantity: i.quantity,
       unitPrice: i.unitPrice,
       metadata: i.metadata,
@@ -119,6 +130,7 @@ export class CartService {
           cart,
           productId: String(line.productId).slice(0, 64),
           vendorId: normalizeVendorId(line.vendorId),
+          variationId: normalizeVariationId(line.variationId),
           quantity: clampQty(line.quantity),
           unitPrice: formatPrice(line.unitPrice),
           metadata: line.metadata ?? null,
@@ -140,9 +152,13 @@ export class CartService {
     const items = await this.itemRepo().find({ where: { cart: { id: cart.id } } });
     const pid = String(line.productId).slice(0, 64);
     const vid = normalizeVendorId(line.vendorId);
+    const varId = normalizeVariationId(line.variationId);
     const qty = clampQty(line.quantity);
     const price = formatPrice(line.unitPrice);
-    const match = items.find((i) => i.productId === pid && (i.vendorId ?? null) === vid);
+    const key = cartLineKey(pid, vid, varId);
+    const match = items.find(
+      (i) => cartLineKey(i.productId, i.vendorId ?? null, i.variationId ?? null) === key,
+    );
     if (match) {
       match.quantity = clampQty(match.quantity + qty);
       if (line.metadata != null) {
@@ -154,6 +170,7 @@ export class CartService {
         cart,
         productId: pid,
         vendorId: vid,
+        variationId: varId,
         quantity: qty,
         unitPrice: price,
         metadata: line.metadata ?? null,

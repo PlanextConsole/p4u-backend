@@ -86,6 +86,16 @@ export class VendorMediaService {
     return repo.save(row);
   }
 
+  async moveAsset(vendorId: string, assetId: string, folderId: string): Promise<VendorMediaAsset> {
+    const folder = await this.getFolder(vendorId, folderId);
+    if (!folder) throw new Error('Folder not found');
+    const repo = AppDataSource.getRepository(VendorMediaAsset);
+    const row = await repo.findOne({ where: { id: assetId } });
+    if (!row || row.vendorId !== vendorId) throw new Error('Asset not found');
+    row.folderId = folderId;
+    return repo.save(row);
+  }
+
   async deleteAsset(vendorId: string, assetId: string): Promise<void> {
     const repo = AppDataSource.getRepository(VendorMediaAsset);
     const row = await repo.findOne({ where: { id: assetId } });

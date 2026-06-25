@@ -4,6 +4,8 @@ import { plainToClass } from 'class-transformer';
 import { jwtAuth, requireRole, requirePermission } from '../../middleware/authMiddleware';
 import { getAuthSub, clientIp, parseLimitOffset } from '../../http/adminHttp';
 import { ProductsAdminService } from './products.service';
+import { ProductVariationsService, type VariationUpsertInput } from './product-variations.service';
+import { serializeProductVariation } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductRequestDto } from './dto/update-product-request.dto';
@@ -13,6 +15,7 @@ import { UpdateTaxConfigurationDto } from './dto/update-tax-configuration.dto';
 export function createProductsAdminRoutes(): Router {
   const r = Router();
   const svc = new ProductsAdminService();
+  const varSvc = new ProductVariationsService();
   r.use(jwtAuth);
   r.use(requireRole('ADMIN'));
   r.use(requirePermission('product.admin.manage'));
@@ -48,7 +51,13 @@ export function createProductsAdminRoutes(): Router {
         return res.status(400).json({ message: msgs.join(', ') });
       }
       const row = await svc.createProduct(dto, getAuthSub(req), clientIp(req));
-      res.status(201).json(row);
+      const variations = Array.isArray(req.body?.variations) ? (req.body.variations as VariationUpsertInput[]) : [];
+      const productType = String((dto.metadata as Record<string, unknown> | undefined)?.productType || req.body?.metadata?.productType || 'simple');
+      if (productType === 'variable' && variations.length) {
+        await varSvc.replaceForProduct(row.id, variations);
+      }
+      const savedVars = await varSvc.listByProductId(row.id);
+      res.status(201).json({ ...row, variations: savedVars.map(serializeProductVariation) });
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
@@ -65,7 +74,19 @@ export function createProductsAdminRoutes(): Router {
         return res.status(400).json({ message: msgs.join(', ') });
       }
       const row = await svc.updateProduct(req.params.id, dto, getAuthSub(req), clientIp(req));
-      res.json(row);
+      const variations = Array.isArray(req.body?.variations) ? (req.body.variations as VariationUpsertInput[]) : undefined;
+      const productType = String(
+        (dto.metadata as Record<string, unknown> | undefined)?.productType
+          ?? req.body?.metadata?.productType
+          ?? (row.metadata as Record<string, unknown> | null)?.productType
+          ?? 'simple',
+      );
+      if (variations !== undefined) {
+        if (productType === 'variable') await varSvc.replaceForProduct(row.id, variations);
+        else await varSvc.deleteForProduct(row.id);
+      }
+      const savedVars = await varSvc.listByProductId(row.id);
+      res.json({ ...row, variations: savedVars.map(serializeProductVariation) });
     } catch (e: any) {
       const status = e.message === 'Product not found' ? 404 : 400;
       res.status(status).json({ message: e.message });

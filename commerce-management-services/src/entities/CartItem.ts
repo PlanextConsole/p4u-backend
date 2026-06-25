@@ -24,6 +24,9 @@ export class CartItem {
   @Column({ name: 'vendor_id', type: 'varchar', length: 36, nullable: true })
   vendorId!: string | null;
 
+  @Column({ name: 'variation_id', type: 'varchar', length: 36, nullable: true })
+  variationId!: string | null;
+
   @Column({ type: 'int', default: 1 })
   quantity!: number;
 

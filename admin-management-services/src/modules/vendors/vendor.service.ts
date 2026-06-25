@@ -8,6 +8,7 @@ import { UpdateVendorDto } from './dto/update-vendor.dto';
 import { UpdateVendorEnquiryDto } from './dto/update-vendor-enquiry.dto';
 import { ApproveVendorRequestDto } from './dto/approve-vendor-request.dto';
 import { VendorReferralService } from './vendor.referral.service';
+import { assertCreateVendorRules, assertUpdateVendorRules } from './vendor.validation';
 
 const PENDING_VENDOR_STATUSES = ['pending', 'not_verified'] as const;
 
@@ -217,6 +218,50 @@ export class VendorAdminService {
       .getOne();
   }
 
+  private async findVendorByEmail(email: string | null | undefined): Promise<Vendor | null> {
+    const normalized = String(email ?? '').trim().toLowerCase();
+    if (!normalized) return null;
+    return AppDataSource.getRepository(Vendor)
+      .createQueryBuilder('vendor')
+      .where('LOWER(TRIM(COALESCE(vendor.email, ""))) = :email', { email: normalized })
+      .getOne();
+  }
+
+  private async assertUniqueVendorContact(
+    phone: string | null | undefined,
+    email: string | null | undefined,
+    excludeVendorId?: string,
+  ): Promise<void> {
+    const byPhone = await this.findVendorByPhoneDigits(phone);
+    if (byPhone && byPhone.id !== excludeVendorId) {
+      throw new Error('A vendor with this mobile number already exists');
+    }
+    const byEmail = await this.findVendorByEmail(email);
+    if (byEmail && byEmail.id !== excludeVendorId) {
+      throw new Error('A vendor with this email already exists');
+    }
+  }
+
+  private vendorRefFromRow(row: Vendor): string | null {
+    const docs = row.documentsJson && typeof row.documentsJson === 'object' ? row.documentsJson : {};
+    const ref = (docs as Record<string, unknown>).vendorRef;
+    return ref != null && String(ref).trim() ? String(ref).trim() : null;
+  }
+
+  private async generateVendorRef(): Promise<string> {
+    const repo = AppDataSource.getRepository(Vendor);
+    const baseCount = await repo.count();
+    for (let i = 0; i < 25; i++) {
+      const candidate = `VEND${String(baseCount + 1 + i).padStart(7, '0')}`;
+      const clash = await repo
+        .createQueryBuilder('vendor')
+        .where(`JSON_UNQUOTE(JSON_EXTRACT(vendor.documents_json, '$.vendorRef')) = :ref`, { ref: candidate })
+        .getCount();
+      if (!clash) return candidate;
+    }
+    throw new Error('Could not generate vendor ID');
+  }
+
   /**
    * Unified pending queue for admin approval: catalog rows awaiting review plus
    * signup requests that never received a catalog mirror row.
@@ -334,19 +379,26 @@ export class VendorAdminService {
     actorSub: string,
     ip: string | undefined
   ): Promise<Vendor> {
+    assertCreateVendorRules(dto);
+    await this.assertUniqueVendorContact(dto.phone, dto.email);
+    const vendorRef = await this.generateVendorRef();
+    const documentsJson = {
+      ...(dto.documentsJson && typeof dto.documentsJson === 'object' ? dto.documentsJson : {}),
+      vendorRef,
+    };
     const repo = AppDataSource.getRepository(Vendor);
     const row = repo.create({
-      businessName: dto.businessName,
-      ownerName: dto.ownerName,
+      businessName: String(dto.businessName).trim(),
+      ownerName: String(dto.ownerName).trim(),
       age: dto.age ?? null,
       gender: dto.gender ?? null,
       thumbnailUrl: dto.thumbnailUrl ?? null,
       bannerUrl: dto.bannerUrl ?? null,
       gst: dto.gst ?? null,
       pan: dto.pan ?? null,
-      phone: dto.phone ?? null,
+      phone: String(dto.phone).trim(),
       secondaryPhone: dto.secondaryPhone ?? null,
-      email: dto.email ?? null,
+      email: String(dto.email).trim(),
       membershipStatus: dto.membershipStatus ?? null,
       status: dto.status ?? 'not_verified',
       experience: dto.experience ?? null,
@@ -364,7 +416,7 @@ export class VendorAdminService {
       coverageRadiusKm: dto.coverageRadiusKm ?? null,
       restriction: dto.restriction ?? null,
       selfDelivery: dto.selfDelivery ?? false,
-      documentsJson: dto.documentsJson ?? null,
+      documentsJson,
       bankJson: dto.bankJson ?? null,
       notes: dto.notes ?? null,
       keycloakUserId: dto.keycloakUserId ?? null,
@@ -396,17 +448,21 @@ export class VendorAdminService {
     if (!row) {
       throw new Error('Vendor not found');
     }
-    if (dto.businessName !== undefined) row.businessName = dto.businessName;
-    if (dto.ownerName !== undefined) row.ownerName = dto.ownerName;
+    assertUpdateVendorRules(dto, { vendorKind: vendorRowKind(row) });
+    const nextPhone = dto.phone !== undefined ? dto.phone : row.phone;
+    const nextEmail = dto.email !== undefined ? dto.email : row.email;
+    await this.assertUniqueVendorContact(nextPhone, nextEmail, row.id);
+    if (dto.businessName !== undefined) row.businessName = String(dto.businessName).trim();
+    if (dto.ownerName !== undefined) row.ownerName = String(dto.ownerName).trim();
     if (dto.age !== undefined) row.age = dto.age;
     if (dto.gender !== undefined) row.gender = dto.gender;
     if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = dto.thumbnailUrl;
     if (dto.bannerUrl !== undefined) row.bannerUrl = dto.bannerUrl;
     if (dto.gst !== undefined) row.gst = dto.gst;
     if (dto.pan !== undefined) row.pan = dto.pan;
-    if (dto.phone !== undefined) row.phone = dto.phone;
+    if (dto.phone !== undefined) row.phone = String(dto.phone).trim();
     if (dto.secondaryPhone !== undefined) row.secondaryPhone = dto.secondaryPhone;
-    if (dto.email !== undefined) row.email = dto.email;
+    if (dto.email !== undefined) row.email = String(dto.email).trim();
     if (dto.membershipStatus !== undefined) row.membershipStatus = dto.membershipStatus;
     if (dto.status !== undefined) row.status = dto.status;
     if (dto.experience !== undefined) row.experience = dto.experience;

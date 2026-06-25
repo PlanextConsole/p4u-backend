@@ -16,6 +16,7 @@ import { ServiceSubcategory } from '../modules/catalog/entities/ServiceSubcatego
 import { CatalogServiceItem } from '../modules/catalog/entities/CatalogServiceItem';
 import { VendorService } from '../modules/catalog/entities/VendorService';
 import { Product } from '../modules/products/entities/Product';
+import { ProductVariation } from '../modules/products/entities/ProductVariation';
 import { ProductRequest } from '../modules/products/entities/ProductRequest';
 import { CommerceReview } from '../modules/products/entities/CommerceReview';
 import { ProductAttributeDefinition } from '../modules/product-attributes/entities/ProductAttributeDefinition';
@@ -73,6 +74,7 @@ export const AppDataSource = new DataSource({
     CatalogServiceItem,
     VendorService,
     Product,
+    ProductVariation,
     ProductRequest,
     CommerceReview,
     ProductAttributeDefinition,

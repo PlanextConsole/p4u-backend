@@ -16,6 +16,7 @@ import {
   repairPricingEngineSchema,
   repairVendorCatalogModerationSchema,
   repairVendorBookingAvailabilitySchema,
+  repairProductVariationsSchema,
   seedPlatformVariableDefaults,
   seedDefaultVendorPlans,
 } from './config/schemaRepair';
@@ -58,6 +59,7 @@ async function startServer() {
     await repairPricingEngineSchema();
     await repairVendorCatalogModerationSchema();
     await repairVendorBookingAvailabilitySchema();
+    await repairProductVariationsSchema();
 
     // 3. Seed defaults — only inserts when target rows/tables are empty.
     await repairOccupationAdminCreatePlatformVariableSeed();

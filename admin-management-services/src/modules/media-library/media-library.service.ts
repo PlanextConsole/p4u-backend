@@ -147,6 +147,36 @@ export class MediaLibraryAdminService {
     return row;
   }
 
+  private async findOrCreateGeneralUploadsFolder(): Promise<MediaLibraryFolder> {
+    const fRepo = this.folderRepo();
+    const existing = await fRepo.findOne({ where: { slug: 'general-uploads' } });
+    if (existing) return existing;
+    return this.createFolder('General Uploads', 'general', 'system', undefined);
+  }
+
+  /** Index a flat `/uploads/{filename}` admin form upload in the media library. */
+  async registerFlatAdminUpload(file: Express.Multer.File): Promise<MediaLibraryAsset | null> {
+    if (!file?.filename) return null;
+    const folder = await this.findOrCreateGeneralUploadsFolder();
+    const fileUrl = adminUploadPublicUrl(file.filename);
+    const repo = this.assetRepo();
+    const prior = await repo.findOne({ where: { fileUrl } });
+    if (prior) return prior;
+    const row = repo.create({
+      id: randomUUID(),
+      folderId: folder.id,
+      originalName: file.originalname || file.filename,
+      fileUrl,
+      relativePath: file.filename,
+      mime: file.mimetype || mimeFromName(file.originalname || file.filename),
+      sizeBytes: String(file.size ?? 0),
+      storageKind: 'local',
+      b2Key: null,
+    });
+    await repo.save(row);
+    return row;
+  }
+
   async deleteAsset(id: string, actorSub: string | undefined, ip: string | undefined): Promise<void> {
     const repo = this.assetRepo();
     const row = await repo.findOne({ where: { id } });

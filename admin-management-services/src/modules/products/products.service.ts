@@ -10,9 +10,29 @@ import { CreateTaxConfigurationDto } from './dto/create-tax-configuration.dto';
 import { UpdateTaxConfigurationDto } from './dto/update-tax-configuration.dto';
 import { CommerceReview } from './entities/CommerceReview';
 import { normalizeMediaUrl, normalizeMediaUrlList } from '../../util/normalizeMediaUrl';
+import { ProductVariationsService } from './product-variations.service';
+import { ProductVariation } from './entities/ProductVariation';
+
+export function serializeProductVariation(v: ProductVariation) {
+  return {
+    id: v.id,
+    productId: v.productId,
+    sku: v.sku,
+    attributes: v.attributes,
+    sellPrice: v.sellPrice,
+    discountAmount: v.discountAmount,
+    finalPrice: v.finalPrice,
+    quantity: v.quantity,
+    thumbnailUrl: v.thumbnailUrl,
+    isActive: v.isActive,
+    sortOrder: v.sortOrder,
+    metadata: v.metadata,
+  };
+}
 
 export class ProductsAdminService {
   private audit = new AuditService();
+  private variations = new ProductVariationsService();
 
   async listProducts(limit: number, offset: number): Promise<{ items: Product[]; total: number }> {
     const repo = AppDataSource.getRepository(Product);
@@ -20,8 +40,11 @@ export class ProductsAdminService {
     return { items, total };
   }
 
-  async getProduct(id: string): Promise<Product | null> {
-    return AppDataSource.getRepository(Product).findOne({ where: { id } });
+  async getProduct(id: string): Promise<(Product & { variations?: ReturnType<typeof serializeProductVariation>[] }) | null> {
+    const row = await AppDataSource.getRepository(Product).findOne({ where: { id } });
+    if (!row) return null;
+    const vars = await this.variations.listByProductId(id);
+    return { ...row, variations: vars.map(serializeProductVariation) };
   }
 
   async getProductRequest(id: string): Promise<ProductRequest | null> {
@@ -96,6 +119,7 @@ export class ProductsAdminService {
     const repo = AppDataSource.getRepository(Product);
     const row = await repo.findOne({ where: { id } });
     if (!row) throw new Error('Product not found');
+    await this.variations.deleteForProduct(id);
     await repo.remove(row);
     await this.audit.log({ actorSub, action: 'DELETE', entityType: 'Product', entityId: id, metadata: { name: row.name }, ipAddress: ip ?? null });
   }

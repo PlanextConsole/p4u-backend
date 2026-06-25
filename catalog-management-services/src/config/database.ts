@@ -6,6 +6,7 @@ import { ServiceSubcategory } from '../entities/ServiceSubcategory';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { Vendor } from '../entities/Vendor';
 import { Product } from '../entities/Product';
+import { ProductVariation } from '../entities/ProductVariation';
 import { VendorService } from '../entities/VendorService';
 
 export const AppDataSource = new DataSource({
@@ -15,7 +16,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME || 'root',
   password: process.env.DB_PASSWORD || 'root@123',
   database: process.env.DB_NAME || 'p4u_admin_db',
-  entities: [ProductCategory, ProductSubcategory, ServiceCategory, ServiceSubcategory, CatalogServiceItem, Vendor, Product, VendorService],
+  entities: [ProductCategory, ProductSubcategory, ServiceCategory, ServiceSubcategory, CatalogServiceItem, Vendor, Product, ProductVariation, VendorService],
   synchronize: process.env.NODE_ENV !== 'production',
   logging: process.env.NODE_ENV === 'development',
 });

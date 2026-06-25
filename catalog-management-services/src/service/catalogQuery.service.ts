@@ -6,6 +6,7 @@ import { ServiceCategory } from '../entities/ServiceCategory';
 import { ServiceSubcategory } from '../entities/ServiceSubcategory';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { Product } from '../entities/Product';
+import { ProductVariation } from '../entities/ProductVariation';
 import { Vendor } from '../entities/Vendor';
 import { VendorService } from '../entities/VendorService';
 import { normalizeDocumentsJson, normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
@@ -16,6 +17,23 @@ function normCategory<T extends PublicCategory>(c: T): T {
     thumbnailUrl: normalizeMediaUrl(c.thumbnailUrl ?? null),
     iconUrl: normalizeMediaUrl(c.iconUrl ?? null),
     bannerUrls: normalizeMediaUrlList(c.bannerUrls ?? null),
+  };
+}
+
+function normVariation(v: ProductVariation) {
+  return {
+    id: v.id,
+    productId: v.productId,
+    sku: v.sku,
+    attributes: v.attributes,
+    sellPrice: v.sellPrice,
+    discountAmount: v.discountAmount,
+    finalPrice: v.finalPrice,
+    quantity: v.quantity,
+    thumbnailUrl: normalizeMediaUrl(v.thumbnailUrl ?? null),
+    isActive: v.isActive,
+    sortOrder: v.sortOrder,
+    metadata: v.metadata,
   };
 }
 
@@ -206,18 +224,27 @@ export class CatalogQueryService {
 
   async getProduct(id: string, includeInactive: boolean) {
     const repo = AppDataSource.getRepository(Product);
+    const varRepo = AppDataSource.getRepository(ProductVariation);
+    let row: Product | null;
     if (includeInactive) {
-      const row = await repo.findOne({ where: { id } });
-      return row ? normProduct(row) : null;
+      row = await repo.findOne({ where: { id } });
+    } else {
+      row = await repo
+        .createQueryBuilder('p')
+        .innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' })
+        .where('p.id = :id', { id })
+        .andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' })
+        .andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true })
+        .getOne();
     }
-    const row = await repo
-      .createQueryBuilder('p')
-      .innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' })
-      .where('p.id = :id', { id })
-      .andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' })
-      .andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true })
-      .getOne();
-    return row ? normProduct(row) : null;
+    if (!row) return null;
+    const variationWhere: { productId: string; isActive?: boolean } = { productId: id };
+    if (!includeInactive) variationWhere.isActive = true;
+    const variations = await varRepo.find({
+      where: variationWhere,
+      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+    });
+    return { ...normProduct(row), variations: variations.map(normVariation) };
   }
 
   async listProductsForBrowse(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {

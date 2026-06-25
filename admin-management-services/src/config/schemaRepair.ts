@@ -677,6 +677,66 @@ export async function repairVendorCatalogModerationSchema(): Promise<void> {
   }
 }
 
+const PRODUCT_VARIATIONS_TABLE_DDL = `
+CREATE TABLE IF NOT EXISTS \`catalog_product_variations\` (
+  \`id\` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  \`product_id\` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  \`sku\` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  \`attributes\` json NOT NULL,
+  \`sell_price\` decimal(12,2) NOT NULL DEFAULT '0.00',
+  \`discount_amount\` decimal(12,2) NOT NULL DEFAULT '0.00',
+  \`final_price\` decimal(12,2) NOT NULL DEFAULT '0.00',
+  \`quantity\` int NOT NULL DEFAULT '0',
+  \`thumbnail_url\` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  \`is_active\` tinyint NOT NULL DEFAULT '1',
+  \`sort_order\` int NOT NULL DEFAULT '0',
+  \`metadata\` json DEFAULT NULL,
+  \`created_at\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  \`updated_at\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (\`id\`),
+  KEY \`IDX_catalog_product_variations_product_id\` (\`product_id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
+
+/** Variable-product SKU rows + optional cart line variation reference. */
+export async function repairProductVariationsSchema(): Promise<void> {
+  const host = process.env.DB_HOST || 'localhost';
+  const port = parseInt(process.env.DB_PORT || '3306', 10);
+  const user = process.env.DB_USERNAME || 'root';
+  const password = process.env.DB_PASSWORD || 'root@123';
+  const database = process.env.DB_NAME || 'p4u_admin_db';
+
+  let connection: Awaited<ReturnType<typeof createConnection>> | undefined;
+  try {
+    connection = await createConnection({ host, port, user, password, database });
+    await connection.query(PRODUCT_VARIATIONS_TABLE_DDL);
+    console.log('[admin-service] Ensured catalog_product_variations table');
+
+    const [cartTables] = await connection.query<RowDataPacket[]>(
+      `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+      [database, 'commerce_cart_items'],
+    );
+    if (cartTables.length) {
+      const [cols] = await connection.query<RowDataPacket[]>(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [database, 'commerce_cart_items', 'variation_id'],
+      );
+      if (!cols.length) {
+        await connection.query(
+          'ALTER TABLE `commerce_cart_items` ADD COLUMN `variation_id` varchar(36) NULL AFTER `vendor_id`',
+        );
+        console.log('[admin-service] Added commerce_cart_items.variation_id');
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[admin-service] product-variations schema repair skipped:',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    if (connection) await connection.end().catch(() => undefined);
+  }
+}
+
 /** Adds `catalog_vendors.booking_availability_json` for service-vendor scheduling. */
 export async function repairVendorBookingAvailabilitySchema(): Promise<void> {
   const host = process.env.DB_HOST || 'localhost';

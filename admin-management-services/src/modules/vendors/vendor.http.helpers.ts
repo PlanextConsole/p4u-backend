@@ -25,6 +25,13 @@ export function normalizeVendorWriteBody(body: Record<string, unknown>): Record<
     if (u === 'PRODUCT') b.vendorKind = 'product';
     else if (u === 'SERVICE') b.vendorKind = 'service';
   }
+  if (b.phone != null && String(b.phone).trim()) {
+    const digits = String(b.phone).replace(/\D/g, '');
+    if (digits.length >= 10) b.phone = digits.slice(-10);
+  }
+  if (b.email != null) b.email = String(b.email).trim().toLowerCase();
+  if (b.gst != null && String(b.gst).trim()) b.gst = String(b.gst).trim().toUpperCase();
+  if (b.pan != null && String(b.pan).trim()) b.pan = String(b.pan).trim().toUpperCase();
   return b;
 }
 
@@ -33,9 +40,16 @@ export function serializeVendorRow(v: Vendor): Record<string, unknown> {
   const normalizedType = String(v.vendorType || '').trim().toUpperCase();
   const vendorKind = normalizedKind === 'service' || normalizedType === 'SERVICE' ? 'service' : 'product';
   const vendorType = vendorKind === 'service' ? 'SERVICE' : 'PRODUCT';
+  const docs = v.documentsJson && typeof v.documentsJson === 'object' ? v.documentsJson : {};
+  const vendorRef =
+    typeof (docs as Record<string, unknown>).vendorRef === 'string'
+      ? String((docs as Record<string, unknown>).vendorRef).trim() || null
+      : null;
   return {
     ...v,
     vendorKind,
     vendorType,
+    vendorRef,
+    catalogVendorId: v.id,
   };
 }

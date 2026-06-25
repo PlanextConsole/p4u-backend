@@ -1,6 +1,44 @@
 import { AppDataSource } from '../config/database';
 import { Product } from '../entities/Product';
+import { ProductVariation } from '../entities/ProductVariation';
 import { countUnitsSoldByProduct } from './vendorOrderEnrichment';
+import { ProductVariationsService, type VariationUpsertInput } from './productVariations.service';
+
+function serializeVariation(v: ProductVariation) {
+  return {
+    id: v.id,
+    productId: v.productId,
+    sku: v.sku,
+    attributes: v.attributes,
+    sellPrice: v.sellPrice,
+    discountAmount: v.discountAmount,
+    finalPrice: v.finalPrice,
+    quantity: v.quantity,
+    thumbnailUrl: v.thumbnailUrl,
+    isActive: v.isActive,
+    sortOrder: v.sortOrder,
+    metadata: v.metadata,
+  };
+}
+
+function extractVariations(body: Record<string, unknown>): VariationUpsertInput[] | undefined {
+  if (!Array.isArray(body.variations)) return undefined;
+  return body.variations as VariationUpsertInput[];
+}
+
+function resolveProductType(body: Record<string, unknown>, row?: Product): string {
+  const meta = body.metadata;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    const pt = (meta as Record<string, unknown>).productType;
+    if (pt != null) return String(pt);
+  }
+  const rowMeta = row?.metadata;
+  if (rowMeta && typeof rowMeta === 'object' && !Array.isArray(rowMeta)) {
+    const pt = (rowMeta as Record<string, unknown>).productType;
+    if (pt != null) return String(pt);
+  }
+  return 'simple';
+}
 
 export interface MergedCategoryRow {
   id: string;
@@ -9,6 +47,8 @@ export interface MergedCategoryRow {
 }
 
 export class VendorCatalogService {
+  private variations = new ProductVariationsService();
+
   async getCategoriesForProducts(): Promise<MergedCategoryRow[]> {
     const roots: { id: string; name: string }[] = await AppDataSource.query(
       `SELECT id, name FROM product_categories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC`,
@@ -85,13 +125,15 @@ export class VendorCatalogService {
     return items.map((p) => ({ ...p, unitsSold: counts[p.id] || 0 }));
   }
 
-  async getProductForVendor(vendorId: string, productId: string): Promise<Product | null> {
+  async getProductForVendor(vendorId: string, productId: string): Promise<(Product & { variations: ReturnType<typeof serializeVariation>[] }) | null> {
     const row = await AppDataSource.getRepository(Product).findOne({ where: { id: productId } });
     if (!row || row.vendorId !== vendorId) return null;
-    return row;
+    const vars = await this.variations.listByProductId(productId);
+    return Object.assign(row, { variations: vars.map(serializeVariation) });
   }
 
-  async createProductForVendor(vendorId: string, body: Record<string, unknown>): Promise<Product> {
+  async createProductForVendor(vendorId: string, body: Record<string, unknown>): Promise<Product & { variations: ReturnType<typeof serializeVariation>[] }> {
+    const variationRows = extractVariations(body);
     const repo = AppDataSource.getRepository(Product);
     const sell = toPriceString(body.sellPrice ?? body.sell_price, '0');
     const disc = toPriceString(body.discountAmount ?? body.discount_amount, '0');
@@ -121,14 +163,21 @@ export class VendorCatalogService {
       moderationStatus: 'pending',
       metadata: metaObj(body.metadata),
     });
-    return repo.save(row);
+    const saved = await repo.save(row);
+    const productType = resolveProductType(body);
+    if (productType === 'variable' && variationRows?.length) {
+      await this.variations.replaceForProduct(saved.id, variationRows);
+    }
+    const vars = await this.variations.listByProductId(saved.id);
+    return Object.assign(saved, { variations: vars.map(serializeVariation) });
   }
 
   async updateProductForVendor(
     vendorId: string,
     productId: string,
     body: Record<string, unknown>,
-  ): Promise<Product> {
+  ): Promise<Product & { variations: ReturnType<typeof serializeVariation>[] }> {
+    const variationRows = extractVariations(body);
     const repo = AppDataSource.getRepository(Product);
     const row = await repo.findOne({ where: { id: productId } });
     if (!row) throw new Error('Product not found');
@@ -162,7 +211,14 @@ export class VendorCatalogService {
       row.availability = row.isActive;
     }
     if (body.metadata !== undefined) row.metadata = metaObj(body.metadata);
-    return repo.save(row);
+    const saved = await repo.save(row);
+    const productType = resolveProductType(body, saved);
+    if (variationRows !== undefined) {
+      if (productType === 'variable') await this.variations.replaceForProduct(saved.id, variationRows);
+      else await this.variations.deleteForProduct(saved.id);
+    }
+    const vars = await this.variations.listByProductId(saved.id);
+    return Object.assign(saved, { variations: vars.map(serializeVariation) });
   }
 
   async deleteProductForVendor(vendorId: string, productId: string): Promise<void> {
@@ -170,6 +226,7 @@ export class VendorCatalogService {
     const row = await repo.findOne({ where: { id: productId } });
     if (!row) throw new Error('Product not found');
     if (row.vendorId !== vendorId) throw new Error('Product does not belong to vendor');
+    await this.variations.deleteForProduct(productId);
     await repo.remove(row);
   }
 }

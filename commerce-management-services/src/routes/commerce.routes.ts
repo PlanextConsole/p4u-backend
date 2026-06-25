@@ -106,6 +106,7 @@ export function createCommerceRoutes(): Router {
         const data = await cartSvc.addItem(customerId, {
           productId: String(body.productId),
           vendorId: body.vendorId ?? null,
+          variationId: body.variationId ?? null,
           quantity: body.quantity ?? 1,
           unitPrice: body.unitPrice ?? '0',
           metadata: body.metadata ?? null,

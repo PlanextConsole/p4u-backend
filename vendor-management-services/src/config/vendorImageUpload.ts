@@ -35,8 +35,11 @@ export const vendorImageUpload = multer({
     const mimeOk = mime.startsWith("image/");
     const extOk =
       IMAGE_EXT.test(file.originalname || "") ||
-      [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"].includes(ext);
-    if (mimeOk || extOk) cb(null, true);
+      [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"].includes(ext);
+    const octetOk =
+      (mime === "application/octet-stream" || mime === "binary/octet-stream") &&
+      IMAGE_EXT.test(file.originalname || "");
+    if (mimeOk || extOk || octetOk) cb(null, true);
     else cb(new Error("Only image files are allowed (JPEG, PNG, WebP, GIF, SVG, etc.)."));
   },
 });

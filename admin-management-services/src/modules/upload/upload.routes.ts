@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import { jwtAuth, requireRole } from '../../middleware/authMiddleware';
 import { adminUploadRoot, ensureAdminUploadDir } from '../../config/uploadPaths';
+import { MediaLibraryAdminService } from '../media-library/media-library.service';
 
 ensureAdminUploadDir();
 const UPLOAD_DIR = adminUploadRoot();
@@ -27,6 +28,12 @@ function isAllowedAdminUpload(file: Express.Multer.File): boolean {
   if (mime.startsWith('image/') || mime.startsWith('video/')) return true;
   if (mime === 'application/pdf') return true;
   if (IMAGE_EXT.test(name) || VIDEO_EXT.test(name)) return true;
+  if (['.webp', '.jpg', '.jpeg', '.png', '.gif', '.avif', '.heic', '.heif', '.svg', '.bmp'].includes(ext)) {
+    return true;
+  }
+  if ((mime === 'application/octet-stream' || mime === 'binary/octet-stream') && IMAGE_EXT.test(name)) {
+    return true;
+  }
   if (ext === '.pdf') return true;
   return false;
 }
@@ -66,14 +73,20 @@ function handleMulterSingle(field: string) {
 
 export const createUploadRoutes = (): Router => {
   const router = Router();
+  const mediaLibrary = new MediaLibraryAdminService();
 
   router.use(jwtAuth);
   router.use(requireRole('ADMIN'));
 
-  router.post('/upload', handleMulterSingle('file'), (req: Request, res: Response) => {
+  router.post('/upload', handleMulterSingle('file'), async (req: Request, res: Response) => {
     const file = req.file;
     if (!file) {
       return res.status(400).json({ message: 'No file uploaded' });
+    }
+    try {
+      await mediaLibrary.registerFlatAdminUpload(file);
+    } catch {
+      /* library indexing must not block form uploads */
     }
     const url = `/uploads/${file.filename}`;
     res.status(201).json({ url, filename: file.filename, originalName: file.originalname, size: file.size });

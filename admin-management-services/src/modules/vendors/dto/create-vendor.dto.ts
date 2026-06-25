@@ -7,21 +7,23 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import type { VendorKycStatus, VendorStatus } from '../entities/Vendor';
 
 export class CreateVendorDto {
-  @IsOptional()
+  @IsNotEmpty({ message: 'Business name is required' })
   @IsString()
   @MaxLength(255)
-  businessName?: string;
+  businessName!: string;
 
-  @IsOptional()
+  @IsNotEmpty({ message: 'Owner name is required' })
   @IsString()
   @MaxLength(255)
-  ownerName?: string;
+  ownerName!: string;
 
   @IsOptional()
   @IsNumber()
@@ -42,30 +44,35 @@ export class CreateVendorDto {
   @MaxLength(512)
   bannerUrl?: string | null;
 
-  @IsOptional()
+  @ValidateIf((o) => o.gst != null && String(o.gst).trim() !== '')
+  @Matches(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/i, {
+    message: 'GSTIN must be 15 characters in valid format',
+  })
   @IsString()
   @MaxLength(64)
   gst?: string | null;
 
-  @IsOptional()
+  @ValidateIf((o) => o.pan != null && String(o.pan).trim() !== '')
+  @Matches(/^[A-Z]{5}[0-9]{4}[A-Z]$/i, { message: 'PAN must be 10 characters in valid format' })
   @IsString()
   @MaxLength(64)
   pan?: string | null;
 
-  @IsOptional()
+  @IsNotEmpty({ message: 'Mobile number is required' })
+  @Matches(/^(?:\+?91)?[6-9]\d{9}$/, { message: 'Invalid Indian mobile number' })
   @IsString()
   @MaxLength(32)
-  phone?: string | null;
+  phone!: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(32)
   secondaryPhone?: string | null;
 
-  @IsOptional()
-  @IsEmail()
+  @IsNotEmpty({ message: 'Email is required' })
+  @IsEmail({}, { message: 'Invalid email address' })
   @MaxLength(255)
-  email?: string | null;
+  email!: string;
 
   @IsOptional()
   @IsString()
