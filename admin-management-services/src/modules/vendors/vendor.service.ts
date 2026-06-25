@@ -639,6 +639,59 @@ export class VendorAdminService {
     });
   }
 
+  /**
+   * Reject a pending vendor signup request. Unlike delete, this preserves the
+   * row with status='rejected' so the vendor login flow can show a clear
+   * "your request was rejected" message and block re-registration. If a catalog
+   * vendor row is already linked, it is marked rejected too.
+   */
+  async rejectVendorRequest(
+    id: string,
+    dto: ApproveVendorRequestDto,
+    actorSub: string,
+    ip: string | undefined
+  ): Promise<{ request: VendorRequest }> {
+    return AppDataSource.transaction(async (tx) => {
+      const reqRepo = tx.getRepository(VendorRequest);
+      const vendorRepo = tx.getRepository(Vendor);
+
+      const request = await reqRepo.findOne({ where: { id } });
+      if (!request) throw new Error('Vendor request not found');
+      if (request.status !== 'pending') {
+        throw new Error(`Vendor request already ${request.status}`);
+      }
+
+      const payload = (request.payload || {}) as Record<string, unknown>;
+      request.status = 'rejected';
+      if (dto.notes != null && String(dto.notes).trim()) {
+        request.payload = { ...payload, rejectionReason: String(dto.notes).trim() };
+      }
+      await reqRepo.save(request);
+
+      // Mark any linked catalog row rejected so the login pre-check agrees.
+      const kc = String(payload.keycloakUserId ?? payload.keycloak_user_id ?? '').trim();
+      const phone = String(payload.phone ?? '').trim();
+      let linked: Vendor | null = null;
+      if (kc) linked = await vendorRepo.findOne({ where: { keycloakUserId: kc } });
+      if (!linked && phone) linked = await this.findVendorByPhoneDigits(phone);
+      if (linked) {
+        linked.status = 'rejected';
+        await vendorRepo.save(linked);
+      }
+
+      await this.audit.log({
+        actorSub,
+        action: 'REJECT',
+        entityType: 'VendorRequest',
+        entityId: request.id,
+        metadata: { linkedVendorId: linked?.id ?? null },
+        ipAddress: ip ?? null,
+      });
+
+      return { request };
+    });
+  }
+
   async listVendorEnquiries(
     limit: number,
     offset: number

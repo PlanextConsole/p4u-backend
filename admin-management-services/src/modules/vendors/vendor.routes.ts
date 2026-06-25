@@ -150,6 +150,22 @@ export function createVendorAdminRoutes(): Router {
     }
   };
 
+  const rejectVendorRequest = async (req: Request, res: Response) => {
+    try {
+      const dto = plainToClass(ApproveVendorRequestDto, req.body ?? {});
+      const errors = await validate(dto);
+      if (errors.length > 0) {
+        const msgs = errors.map(e => Object.values(e.constraints || {})).flat();
+        return res.status(400).json({ message: msgs.join(', ') });
+      }
+      const result = await svc.rejectVendorRequest(req.params.id, dto, getAuthSub(req), clientIp(req));
+      res.json(result);
+    } catch (e: any) {
+      const status = e.message === 'Vendor request not found' ? 404 : 400;
+      res.status(status).json({ message: e.message });
+    }
+  };
+
   const listPendingSignupsWithoutCatalog = async (req: Request, res: Response) => {
     try {
       const vendorKind = parseVendorKindFilter(req);
@@ -183,6 +199,7 @@ export function createVendorAdminRoutes(): Router {
   r.get('/vendor-signup-pending', listPendingSignupsWithoutCatalog);
   r.get('/vendor-pending-applications', listPendingApplications);
   r.patch('/vendor-requests/:id/approve', approveVendorRequest);
+  r.patch('/vendor-requests/:id/reject', rejectVendorRequest);
   r.delete('/vendor-requests/:id', deleteVendorRequest);
   r.get('/vendors_request', listVendorRequests);
   r.delete('/vendors_request/:id', deleteVendorRequest);

@@ -11,6 +11,7 @@ import { ForgotPasswordRequest } from '../dto/ForgotPasswordRequest';
 import { ChangePasswordRequest } from '../dto/ChangePasswordRequest';
 import { PhoneExchangeRequest } from '../dto/PhoneExchangeRequest';
 import { VendorRegisterByPhoneRequest } from '../dto/VendorRegisterByPhoneRequest';
+import { VendorRegisterRequest } from '../dto/VendorRegisterRequest';
 import { CustomerRegisterByPhoneRequest } from '../dto/CustomerRegisterByPhoneRequest';
 import KcAdminClient from '@keycloak/keycloak-admin-client';
 import {
@@ -214,6 +215,51 @@ export const createAuthRoutes = (
         const message = mapCaughtErrorToMessage(error);
         const status = statusForPhoneExchangeFailure(message);
         return res.status(status).json({ message });
+      }
+    },
+  );
+
+  /**
+   * No-OTP vendor self-registration. The vendor-web wizard submits business
+   * details only (no phone verification). We record a pending
+   * vendor_signup_requests row for admin review and create NO Keycloak user.
+   * The vendor verifies their phone via OTP only at LOGIN, after approval.
+   */
+  router.post(
+    '/public/vendor/register',
+    publicSignupLimiter,
+    async (req: Request, res: Response) => {
+      try {
+        const dto = plainToClass(VendorRegisterRequest, req.body);
+        const errors = await validate(dto);
+        if (errors.length > 0) {
+          const errorMessages = errors.map(e => Object.values(e.constraints || {})).flat();
+          return res.status(400).json({ message: errorMessages.join(', ') });
+        }
+        const result = await phoneAuthService.registerVendorPending({
+          vendorKind:
+            String(dto.vendorKind || 'product').toLowerCase() === 'service'
+              ? 'service'
+              : 'product',
+          vendorType:
+            String(dto.vendorType || 'PRODUCT').toUpperCase() === 'SERVICE'
+              ? 'SERVICE'
+              : 'PRODUCT',
+          ownerName: dto.ownerName,
+          businessName: dto.businessName,
+          email: dto.email ?? null,
+          phone: dto.phone,
+          gst: dto.gst ?? null,
+          pan: dto.pan ?? null,
+          categoriesJson: dto.categoriesJson ?? null,
+          servicesJson: dto.servicesJson ?? null,
+          addressJson: dto.addressJson ?? null,
+          documentsJson: dto.documentsJson ?? null,
+          bankJson: dto.bankJson ?? null,
+        });
+        return res.status(201).json(result);
+      } catch (error: any) {
+        return res.status(400).json({ message: mapCaughtErrorToMessage(error) });
       }
     },
   );

@@ -32,6 +32,24 @@ export class VendorRegistrationRequestRepository {
       .getOne();
   }
 
+  /**
+   * Latest signup request (any status) whose payload phone matches by last-10
+   * digits. Used by the no-OTP vendor flow to detect pending/rejected requests
+   * for a phone before sending an OTP.
+   */
+  async findLatestByPhone(phone: string): Promise<VendorRegistrationRequest | null> {
+    const last10 = String(phone || '').replace(/\D/g, '').slice(-10);
+    if (last10.length < 10) return null;
+    return this.repository
+      .createQueryBuilder('r')
+      .where(
+        "JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.phone')) LIKE :p",
+        { p: `%${last10}` },
+      )
+      .orderBy('r.createdAt', 'DESC')
+      .getOne();
+  }
+
   /** Latest signup row for a Firebase uid (vendor OTP registration audit trail). */
   async findLatestByFirebaseUid(firebaseUid: string): Promise<VendorRegistrationRequest | null> {
     return this.repository

@@ -35,6 +35,13 @@ const REG_TOKEN_TTL_SECONDS = (() => {
   return Math.min(Math.max(n, 60), 24 * 60 * 60);
 })();
 
+/** Shown when a vendor whose registration is not yet approved tries to log in. */
+export const VENDOR_PENDING_MESSAGE =
+  'Your registration request is still pending approval. Please wait until your account is approved.';
+/** Shown when a rejected vendor tries to log in. */
+export const VENDOR_REJECTED_MESSAGE =
+  'Your vendor registration request was rejected. Please contact support for assistance.';
+
 interface AccessTokenClaims {
   realm_access?: { roles?: string[] };
   permissions?: string[];
@@ -130,6 +137,30 @@ export interface VendorRegistrationPayload {
   bankJson?: Record<string, unknown> | null;
 }
 
+/**
+ * No-OTP vendor registration. Business details only — no Firebase token, no
+ * Keycloak user. We persist a pending vendor_signup_requests row that admin
+ * reviews; the Keycloak user is provisioned lazily at the vendor's first OTP
+ * login after approval.
+ */
+export interface VendorPendingRegistrationPayload {
+  vendorKind: 'service' | 'product';
+  vendorType: 'SERVICE' | 'PRODUCT';
+  ownerName: string;
+  businessName: string;
+  email?: string | null;
+  phone: string;
+  gst?: string | null;
+  pan?: string | null;
+  categoriesJson?: unknown;
+  servicesJson?: unknown;
+  addressJson?: Record<string, unknown> | null;
+  documentsJson?: Record<string, unknown> | null;
+  bankJson?: Record<string, unknown> | null;
+}
+
+export type VendorAccountStatus = 'not_registered' | 'pending' | 'approved' | 'rejected';
+
 function parseOptionalCoord(v: unknown): string | null {
   if (v == null) return null;
   const n = typeof v === 'number' ? v : Number(String(v).trim());
@@ -193,31 +224,49 @@ export class PhoneAuthService {
       }
     }
 
-    // 2) Vendor claim: existing catalog_vendors row already linked to a
-    //    Keycloak user → mint tokens. Status doesn't matter (pending,
-    //    active, rejected — they all need to log in to see their portal
-    //    state and the appropriate banner).
+    // 2) Vendor login. Only APPROVED vendors may sign in. A vendor that already
+    //    has a Keycloak user (returning login, or legacy OTP-flow signup) takes
+    //    the fast path; an approved vendor without a Keycloak user yet gets one
+    //    provisioned lazily on this first login. Pending / rejected vendors are
+    //    rejected with a clear message (vendor-web also gates this before
+    //    sending an OTP, so this is a backstop).
     if (intendedRole === 'VENDOR') {
-      let existing = await this.catalogVendorRepo.findByPhone(phone);
-      if (!existing?.keycloakUserId) {
-        const signup = await this.vendorRequestRepo.findLatestByFirebaseUid(claims.uid);
-        const payload = (signup?.payload || {}) as Record<string, unknown>;
-        const kcFromSignup =
-          typeof payload.keycloakUserId === 'string' ? payload.keycloakUserId.trim() : '';
-        if (kcFromSignup) {
-          existing =
-            (await this.catalogVendorRepo.findByKeycloakUserId(kcFromSignup)) ??
-            existing;
-          if (!existing?.keycloakUserId) {
-            const auth = await this.loginAsKeycloakUser(kcFromSignup);
-            return { loggedIn: true, phone, auth, intendedRole };
-          }
-        }
-      }
-      if (existing && existing.keycloakUserId) {
+      const existing = await this.catalogVendorRepo.findByPhone(phone);
+      if (existing?.keycloakUserId) {
         const auth = await this.loginAsKeycloakUser(existing.keycloakUserId);
         return { loggedIn: true, phone, auth, intendedRole };
       }
+      if (existing) {
+        const st = (existing.status || '').toLowerCase();
+        if (st === 'active' || st === 'approved') {
+          const kcId = await this.ensureVendorKeycloakUser(existing, claims);
+          const auth = await this.loginAsKeycloakUser(kcId);
+          return { loggedIn: true, phone, auth, intendedRole };
+        }
+        if (st === 'rejected' || st === 'suspended') throw new Error(VENDOR_REJECTED_MESSAGE);
+        throw new Error(VENDOR_PENDING_MESSAGE);
+      }
+
+      // No catalog row. Legacy OTP-flow vendors may have a Keycloak id stashed
+      // in their signup payload — honour it so existing accounts still log in.
+      const signup = await this.vendorRequestRepo.findLatestByFirebaseUid(claims.uid);
+      const sp = (signup?.payload || {}) as Record<string, unknown>;
+      const kcFromSignup =
+        typeof sp.keycloakUserId === 'string' ? sp.keycloakUserId.trim() : '';
+      if (kcFromSignup) {
+        const auth = await this.loginAsKeycloakUser(kcFromSignup);
+        return { loggedIn: true, phone, auth, intendedRole };
+      }
+
+      // No catalog row yet → use the signup request status so a pending/rejected
+      // applicant gets the right message instead of being sent to re-register.
+      const req = await this.vendorRequestRepo.findLatestByPhone(phone);
+      if (req) {
+        const rs = (req.status || '').toLowerCase();
+        if (rs === 'pending') throw new Error(VENDOR_PENDING_MESSAGE);
+        if (rs === 'rejected') throw new Error(VENDOR_REJECTED_MESSAGE);
+      }
+      // Truly unknown vendor → fall through to the registration-token path below.
     }
 
     // 3) New user → issue a registration token. Customer-web FE posts this
@@ -241,11 +290,178 @@ export class PhoneAuthService {
    * to a number that has no vendor account (it routes them to registration
    * instead). DB-only — no Firebase / Keycloak round-trip.
    */
-  async vendorPhoneStatus(phone: string): Promise<{ registered: boolean }> {
+  async vendorPhoneStatus(
+    phone: string,
+  ): Promise<{ registered: boolean; status: VendorAccountStatus }> {
     const digits = String(phone || '').replace(/\D/g, '');
-    if (digits.length < 10) return { registered: false };
-    const vendor = await this.catalogVendorRepo.findByPhone(digits);
-    return { registered: Boolean(vendor && vendor.keycloakUserId) };
+    if (digits.length < 10) return { registered: false, status: 'not_registered' };
+    const e164 = `+91${digits.slice(-10)}`;
+
+    // An approved vendor always has a catalog_vendors row (created at approval).
+    const vendor = await this.catalogVendorRepo.findByPhone(e164);
+    if (vendor) {
+      const st = (vendor.status || '').toLowerCase();
+      if (st === 'active' || st === 'approved') return { registered: true, status: 'approved' };
+      if (st === 'rejected' || st === 'suspended') return { registered: false, status: 'rejected' };
+      return { registered: false, status: 'pending' };
+    }
+
+    // Otherwise fall back to the signup request (pending review / rejected).
+    const req = await this.vendorRequestRepo.findLatestByPhone(e164);
+    if (req) {
+      const rs = (req.status || '').toLowerCase();
+      if (rs === 'approved') return { registered: true, status: 'approved' };
+      if (rs === 'rejected') return { registered: false, status: 'rejected' };
+      return { registered: false, status: 'pending' };
+    }
+
+    return { registered: false, status: 'not_registered' };
+  }
+
+  /**
+   * No-OTP vendor self-registration. Records a pending vendor_signup_requests
+   * row that admin reviews. Deliberately creates no Keycloak user (that happens
+   * lazily at first OTP login after approval), which is also why the legacy
+   * "User exists with same username" failure can no longer occur at signup.
+   */
+  async registerVendorPending(
+    payload: VendorPendingRegistrationPayload,
+  ): Promise<{ status: 'pending'; message: string }> {
+    const ownerName = (payload.ownerName || '').trim();
+    const businessName = (payload.businessName || '').trim();
+    if (!ownerName) throw new Error('Owner name is required');
+    if (!businessName) throw new Error('Business name is required');
+
+    const digits = String(payload.phone || '').replace(/\D/g, '');
+    if (digits.length < 10) throw new Error('A valid 10-digit mobile number is required');
+    const e164 = `+91${digits.slice(-10)}`;
+
+    // Already a real vendor (approved or in catalog)?
+    const existingVendor = await this.catalogVendorRepo.findByPhone(e164);
+    if (existingVendor) {
+      const st = (existingVendor.status || '').toLowerCase();
+      if (st === 'rejected' || st === 'suspended') throw new Error(VENDOR_REJECTED_MESSAGE);
+      throw new Error('A vendor account already exists for this phone. Please sign in instead.');
+    }
+
+    const requestPayload = this.buildVendorRequestPayload(payload, e164);
+
+    // Re-submission of an existing request for this phone: update in place
+    // rather than stacking duplicates in the admin queue.
+    const existingReq = await this.vendorRequestRepo.findLatestByPhone(e164);
+    if (existingReq) {
+      const rs = (existingReq.status || '').toLowerCase();
+      if (rs === 'rejected') throw new Error(VENDOR_REJECTED_MESSAGE);
+      if (rs === 'approved') {
+        throw new Error('A vendor account already exists for this phone. Please sign in instead.');
+      }
+      existingReq.payload = requestPayload;
+      await this.vendorRequestRepo.save(existingReq);
+      return { status: 'pending', message: 'Registration request updated.' };
+    }
+
+    const row = new VendorRegistrationRequest();
+    row.requestType = 'vendor-web-signup';
+    row.status = 'pending';
+    row.payload = requestPayload;
+    await this.vendorRequestRepo.save(row);
+    return { status: 'pending', message: 'Registration request submitted.' };
+  }
+
+  private buildVendorRequestPayload(
+    payload: VendorPendingRegistrationPayload,
+    e164: string,
+  ): Record<string, unknown> {
+    const vendorKind = payload.vendorKind === 'service' ? 'service' : 'product';
+    const vendorType = payload.vendorType === 'SERVICE' ? 'SERVICE' : 'PRODUCT';
+    return {
+      source: 'vendor-web-no-otp',
+      ownerName: (payload.ownerName || '').trim(),
+      businessName: (payload.businessName || '').trim(),
+      email: (payload.email || '')?.toString().trim() || null,
+      phone: e164,
+      vendorKind,
+      vendorType,
+      gst: nullableTrim(payload.gst),
+      pan: nullableTrim(payload.pan),
+      categoriesJson: payload.categoriesJson ?? null,
+      servicesJson: payload.servicesJson ?? null,
+      addressJson: payload.addressJson ?? null,
+      documentsJson: payload.documentsJson ?? null,
+      bankJson: payload.bankJson ?? null,
+    };
+  }
+
+  /**
+   * Provision (or reuse) the Keycloak VENDOR user for an approved vendor on
+   * their first OTP login, then link it to the catalog_vendors row. Reusing an
+   * existing user by phone-username is what prevents the legacy
+   * "User exists with same username" error.
+   */
+  private async ensureVendorKeycloakUser(
+    vendor: CatalogVendor,
+    claims: { uid: string; phoneNumber: string },
+  ): Promise<string> {
+    if (vendor.keycloakUserId) return vendor.keycloakUserId;
+    await this.ensureKcAdmin();
+
+    const keycloakUsername = claims.phoneNumber.replace(/\D/g, '');
+    const existingKcList = await this.keycloakAdmin.users.find({
+      username: keycloakUsername,
+      exact: true,
+    });
+    let keycloakUserId =
+      existingKcList && existingKcList.length > 0 ? existingKcList[0].id ?? '' : '';
+
+    if (!keycloakUserId) {
+      const created = await this.keycloakAdmin.users.create({
+        username: keycloakUsername,
+        email: vendor.email ?? undefined,
+        firstName: (vendor.ownerName || '').split(/\s+/)[0] || undefined,
+        lastName: (vendor.ownerName || '').split(/\s+/).slice(1).join(' ') || undefined,
+        enabled: true,
+        emailVerified: false,
+        attributes: {
+          phone: [claims.phoneNumber],
+          firebase_uid: [claims.uid],
+          vendor_type: [vendor.vendorType || 'PRODUCT'],
+        },
+        credentials: [
+          { type: 'password', value: crypto.randomBytes(32).toString('hex'), temporary: false },
+        ],
+      });
+      if (!created.id) throw new Error('Failed to create Keycloak vendor user');
+      keycloakUserId = created.id;
+    }
+
+    const role = await this.keycloakAdmin.roles.findOneByName({ name: 'VENDOR' });
+    if (!role || !role.id) throw new Error('Role VENDOR not found in Keycloak');
+    const currentRoles = await this.keycloakAdmin.users.listRealmRoleMappings({
+      id: keycloakUserId,
+    });
+    if (!(currentRoles || []).some((r) => r.name === 'VENDOR')) {
+      await this.keycloakAdmin.users.addRealmRoleMappings({
+        id: keycloakUserId,
+        roles: [{ id: role.id, name: role.name! }],
+      });
+    }
+
+    let userRow = await this.userRepo.findByKeycloakId(keycloakUserId);
+    if (!userRow) {
+      userRow = new User();
+      userRow.keycloakId = keycloakUserId;
+    }
+    userRow.username = keycloakUsername;
+    if ((userRow.userType || '') !== 'CUSTOMER') userRow.userType = 'VENDOR';
+    userRow.email = userRow.email || vendor.email || `${keycloakUsername}@phone.local`;
+    await this.userRepo.save(userRow);
+
+    vendor.keycloakUserId = keycloakUserId;
+    await this.catalogVendorRepo.save(vendor);
+
+    // Let role mapping propagate before the password-grant token issue.
+    await new Promise((r) => setTimeout(r, 400));
+    return keycloakUserId;
   }
 
   /**
