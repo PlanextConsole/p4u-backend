@@ -549,7 +549,7 @@ export class VendorAdminService {
     actorSub: string,
     ip: string | undefined
   ): Promise<{ vendor: Vendor; request: VendorRequest }> {
-    return AppDataSource.transaction(async (tx) => {
+    const result = await AppDataSource.transaction(async (tx) => {
       const reqRepo = tx.getRepository(VendorRequest);
       const vendorRepo = tx.getRepository(Vendor);
 
@@ -578,7 +578,7 @@ export class VendorAdminService {
             metadata: { vendorId: existing.id, linkedExisting: true },
             ipAddress: ip ?? null,
           });
-          return { vendor: existing, request };
+          return { vendor: existing, request, isNew: false };
         }
       }
       const businessName = String(dto.businessName || payload.businessName || '').trim();
@@ -615,13 +615,11 @@ export class VendorAdminService {
         vendorType: approvedKind === 'service' ? 'SERVICE' : 'PRODUCT',
       });
       await vendorRepo.save(vendor);
-      await this.vendorReferral.ensureReferralCode(vendor);
       const appliedCode = String(payload.appliedReferralCode ?? payload.applied_referral_code ?? '').trim();
       if (appliedCode) {
         vendor.appliedReferralCode = appliedCode;
         await vendorRepo.save(vendor);
       }
-      await this.vendorReferral.applyVendorReferralReward(vendor);
 
       request.status = 'approved';
       await reqRepo.save(request);
@@ -635,8 +633,23 @@ export class VendorAdminService {
         ipAddress: ip ?? null,
       });
 
-      return { vendor, request };
+      return { vendor, request, isNew: true };
     });
+
+    // Referral side-effects run AFTER the transaction commits. Running them
+    // inside the transaction made them update the just-inserted vendor row over
+    // a second pooled connection, which blocked on the open transaction's row
+    // lock and hung the approve request until the DB lock-wait timeout.
+    if (result.isNew) {
+      try {
+        await this.vendorReferral.ensureReferralCode(result.vendor);
+        await this.vendorReferral.applyVendorReferralReward(result.vendor);
+      } catch (e) {
+        console.error('Vendor referral post-approve step failed (approval still succeeded):', e);
+      }
+    }
+
+    return { vendor: result.vendor, request: result.request };
   }
 
   /**
