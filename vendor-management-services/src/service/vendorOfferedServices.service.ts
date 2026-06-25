@@ -46,8 +46,69 @@ export class VendorOfferedServicesService {
     });
   }
 
+  /** Extract catalog service ids from a vendor's `services_json` (ids, or {id|serviceId|value} objects). */
+  private normalizeAssignedServiceIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const ids: string[] = [];
+    for (const entry of raw) {
+      if (entry == null) continue;
+      if (typeof entry === 'string' || typeof entry === 'number') {
+        const s = String(entry).trim();
+        if (s) ids.push(s);
+      } else if (typeof entry === 'object') {
+        const obj = entry as Record<string, unknown>;
+        const id = obj.id ?? obj.serviceId ?? obj.value;
+        if (id != null && String(id).trim()) ids.push(String(id).trim());
+      }
+    }
+    return Array.from(new Set(ids));
+  }
+
+  /**
+   * Back-fill real offerings for services an admin assigned to the vendor via
+   * the "edit vendor" screen (stored on `services_json`). Without this, an
+   * admin-assigned service is bookable by customers (catalog has a services_json
+   * fallback) but never appears in the vendor's own "My Services" list, which
+   * reads only `catalog_vendor_services`. Idempotent: only creates links that
+   * don't already exist. Admin-assigned ⇒ pre-approved and active.
+   */
+  private async backfillAdminAssignedOfferings(vendorId: string): Promise<void> {
+    const vendor = await AppDataSource.getRepository(Vendor).findOne({ where: { id: vendorId } });
+    if (!vendor) return;
+    const assignedIds = this.normalizeAssignedServiceIds(vendor.servicesJson);
+    if (!assignedIds.length) return;
+
+    const vsRepo = AppDataSource.getRepository(CatalogVendorService);
+    const ciRepo = AppDataSource.getRepository(CatalogServiceItem);
+    const existing = await vsRepo.find({ where: { vendorId } });
+    const have = new Set(existing.map((r) => r.serviceId));
+
+    for (const serviceId of assignedIds) {
+      if (have.has(serviceId)) continue;
+      const item = await ciRepo.findOne({ where: { id: serviceId } });
+      if (!item) continue; // not a real catalog service id — skip
+      try {
+        await vsRepo.save(
+          vsRepo.create({
+            vendorId,
+            serviceId,
+            price: item.basePrice != null ? String(item.basePrice) : '0',
+            isAvailable: true,
+            isActive: true,
+            moderationStatus: 'approved',
+            metadata: { assignedByAdmin: true },
+          }),
+        );
+      } catch {
+        // Unique (vendorId, serviceId) race or transient error — safe to ignore;
+        // the row either already exists or will be picked up on the next load.
+      }
+    }
+  }
+
   async listOfferings(vendorId: string): Promise<VendorServiceOfferingRow[]> {
     await this.assertServiceVendor(vendorId);
+    await this.backfillAdminAssignedOfferings(vendorId);
     const vsRepo = AppDataSource.getRepository(CatalogVendorService);
     const links = await vsRepo.find({ where: { vendorId }, order: { updatedAt: 'DESC' } });
     const ciRepo = AppDataSource.getRepository(CatalogServiceItem);
