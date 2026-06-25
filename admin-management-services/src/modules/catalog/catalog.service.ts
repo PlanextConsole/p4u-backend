@@ -520,6 +520,9 @@ export class CatalogAdminService {
     row.metadata = Object.keys(meta).length ? meta : null;
 
     await repo.save(row);
+    if (dto.basePrice !== undefined && row.basePrice != null) {
+      await this.syncAdminAssignedOfferingPrices(row.id, String(row.basePrice));
+    }
     await this.audit.log({
       actorSub,
       action: 'UPDATE',
@@ -678,6 +681,94 @@ export class CatalogAdminService {
       ipAddress: ip ?? null,
     });
     return row;
+  }
+
+  /** IDs from vendor.services_json (strings or {id|serviceId|value} objects). */
+  private normalizeAssignedServiceIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    const ids: string[] = [];
+    for (const entry of raw) {
+      if (entry == null) continue;
+      if (typeof entry === 'string' || typeof entry === 'number') {
+        const s = String(entry).trim();
+        if (s) ids.push(s);
+      } else if (typeof entry === 'object') {
+        const obj = entry as Record<string, unknown>;
+        const id = obj.id ?? obj.serviceId ?? obj.value;
+        if (id != null && String(id).trim()) ids.push(String(id).trim());
+      }
+    }
+    return Array.from(new Set(ids));
+  }
+
+  /**
+   * When admin assigns catalog services on a service vendor, ensure `catalog_vendor_services`
+   * rows exist so the vendor portal and bookings stay aligned with admin.
+   */
+  async syncVendorOfferingsFromServicesJson(vendorId: string, servicesJson: unknown): Promise<number> {
+    const assignedIds = this.normalizeAssignedServiceIds(servicesJson);
+    if (!assignedIds.length) return 0;
+
+    const vendor = await AppDataSource.getRepository(Vendor).findOne({ where: { id: vendorId } });
+    if (!vendor) return 0;
+
+    const vsRepo = AppDataSource.getRepository(CatalogVendorServiceLink);
+    const ciRepo = AppDataSource.getRepository(CatalogServiceItem);
+    const existing = await vsRepo.find({ where: { vendorId } });
+    const have = new Set(existing.map((r) => r.serviceId));
+    let created = 0;
+
+    for (const serviceId of assignedIds) {
+      const item = await ciRepo.findOne({ where: { id: serviceId } });
+      if (!item) continue;
+
+      if (have.has(serviceId)) {
+        const link = existing.find((r) => r.serviceId === serviceId);
+        if (link) {
+          const meta =
+            link.metadata && typeof link.metadata === 'object' && !Array.isArray(link.metadata)
+              ? (link.metadata as Record<string, unknown>)
+              : {};
+          if (meta.assignedByAdmin === true && meta.priceLocked !== true) {
+            const catalogPrice = item.basePrice != null ? String(item.basePrice) : '0';
+            if (link.price !== catalogPrice) {
+              link.price = catalogPrice;
+              await vsRepo.save(link);
+            }
+          }
+        }
+        continue;
+      }
+
+      await vsRepo.save(
+        vsRepo.create({
+          vendorId,
+          serviceId,
+          price: item.basePrice != null ? String(item.basePrice) : '0',
+          isAvailable: true,
+          isActive: true,
+          moderationStatus: 'approved',
+          metadata: { assignedByAdmin: true },
+        }),
+      );
+      created += 1;
+    }
+    return created;
+  }
+
+  private async syncAdminAssignedOfferingPrices(serviceId: string, basePrice: string): Promise<void> {
+    const vsRepo = AppDataSource.getRepository(CatalogVendorServiceLink);
+    const links = await vsRepo.find({ where: { serviceId } });
+    for (const link of links) {
+      const meta =
+        link.metadata && typeof link.metadata === 'object' && !Array.isArray(link.metadata)
+          ? (link.metadata as Record<string, unknown>)
+          : {};
+      if (meta.assignedByAdmin === true && meta.priceLocked === true) continue;
+      if (link.price === basePrice) continue;
+      link.price = basePrice;
+      await vsRepo.save(link);
+    }
   }
 
   async deleteVendorServiceLink(id: string, actorSub: string, ip: string | undefined): Promise<void> {

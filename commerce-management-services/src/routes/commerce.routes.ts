@@ -11,16 +11,11 @@ import {
   requireCustomerSelfOrAdmin,
 } from '../middleware/authMiddleware';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendServerError, sendUnauthorized, sendForbidden } from '../middleware/responseEnvelope';
+import { resolveVendorIdFromAuth } from '../service/vendorContext.service';
 
 function customerIdFromAuth(req: Request): string | null {
   const auth = (req as any).auth;
   const id = String(auth?.customer_id || auth?.sub || '').trim();
-  return id || null;
-}
-
-function vendorIdFromAuth(req: Request): string | null {
-  const auth = (req as any).auth;
-  const id = String(auth?.vendor_id || auth?.vendorId || auth?.sub || '').trim();
   return id || null;
 }
 
@@ -379,8 +374,13 @@ export function createCommerceRoutes(): Router {
     requireShopperRole,
     requirePermission('booking.read.self'),
     async (req: Request, res: Response) => {
-      const vendorId = vendorIdFromAuth(req);
-      if (!vendorId) return sendUnauthorized(res, 'vendor_id or sub required on token');
+      const vendorId = await resolveVendorIdFromAuth((req as any).auth);
+      if (!vendorId) {
+        return sendUnauthorized(
+          res,
+          'Vendor context missing: link catalog_vendors.keycloak_user_id to your Keycloak user or set vendor_id on the token',
+        );
+      }
       const { limit, offset } = parsePaging(req);
       const status = String(req.query.status || '').trim() || undefined;
       const data = await bookingSvc.listVendorBookings(vendorId, limit, offset, status);
@@ -393,8 +393,13 @@ export function createCommerceRoutes(): Router {
     requireShopperRole,
     requirePermission('booking.read.self'),
     async (req: Request, res: Response) => {
-      const vendorId = vendorIdFromAuth(req);
-      if (!vendorId) return sendUnauthorized(res, 'vendor_id or sub required on token');
+      const vendorId = await resolveVendorIdFromAuth((req as any).auth);
+      if (!vendorId) {
+        return sendUnauthorized(
+          res,
+          'Vendor context missing: link catalog_vendors.keycloak_user_id to your Keycloak user or set vendor_id on the token',
+        );
+      }
       const row = await bookingSvc.getBookingForVendor(vendorId, req.params.bookingId);
       if (!row) return sendNotFound(res, 'Booking not found');
       sendSuccess(res, row);
@@ -468,8 +473,13 @@ export function createCommerceRoutes(): Router {
           const row = await bookingSvc.reviewBookingForAdmin(req.params.bookingId, decision as 'approved' | 'rejected');
           return sendSuccess(res, row);
         }
-        const vendorId = vendorIdFromAuth(req);
-        if (!vendorId) return sendUnauthorized(res, 'vendor_id or sub required on token');
+        const vendorId = await resolveVendorIdFromAuth(auth);
+        if (!vendorId) {
+          return sendUnauthorized(
+            res,
+            'Vendor context missing: link catalog_vendors.keycloak_user_id to your Keycloak user or set vendor_id on the token',
+          );
+        }
         const row = await bookingSvc.updateBookingStatusForVendor(vendorId, req.params.bookingId, decision);
         return sendSuccess(res, row);
       } catch (e: any) {

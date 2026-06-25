@@ -9,6 +9,10 @@ export class Vendor {
   @Column({ name: 'business_name', type: 'varchar', length: 255 })
   businessName!: string;
 
+  @Column({ name: 'keycloak_user_id', type: 'varchar', length: 128, nullable: true })
+  @Index()
+  keycloakUserId!: string | null;
+
   @Column({ name: 'commission_rate', type: 'decimal', precision: 5, scale: 2, nullable: true })
   commissionRate!: string | null;
 

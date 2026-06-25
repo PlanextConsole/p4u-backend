@@ -84,7 +84,24 @@ export class VendorOfferedServicesService {
     const have = new Set(existing.map((r) => r.serviceId));
 
     for (const serviceId of assignedIds) {
-      if (have.has(serviceId)) continue;
+      if (have.has(serviceId)) {
+        const link = existing.find((r) => r.serviceId === serviceId);
+        const item = await ciRepo.findOne({ where: { id: serviceId } });
+        if (link && item) {
+          const meta =
+            link.metadata && typeof link.metadata === 'object' && !Array.isArray(link.metadata)
+              ? (link.metadata as Record<string, unknown>)
+              : {};
+          if (meta.assignedByAdmin === true && meta.priceLocked !== true) {
+            const catalogPrice = item.basePrice != null ? String(item.basePrice) : '0';
+            if (link.price !== catalogPrice) {
+              link.price = catalogPrice;
+              await vsRepo.save(link);
+            }
+          }
+        }
+        continue;
+      }
       const item = await ciRepo.findOne({ where: { id: serviceId } });
       if (!item) continue; // not a real catalog service id — skip
       try {

@@ -9,6 +9,7 @@ import { UpdateVendorEnquiryDto } from './dto/update-vendor-enquiry.dto';
 import { ApproveVendorRequestDto } from './dto/approve-vendor-request.dto';
 import { VendorReferralService } from './vendor.referral.service';
 import { assertCreateVendorRules, assertUpdateVendorRules } from './vendor.validation';
+import { CatalogAdminService } from '../catalog/catalog.service';
 
 const PENDING_VENDOR_STATUSES = ['pending', 'not_verified'] as const;
 
@@ -176,6 +177,7 @@ function mapSignupToPendingApplication(
 export class VendorAdminService {
   private audit = new AuditService();
   private vendorReferral = new VendorReferralService();
+  private catalog = new CatalogAdminService();
 
   async listVendors(
     limit: number,
@@ -426,6 +428,9 @@ export class VendorAdminService {
     await repo.save(row);
     await this.vendorReferral.ensureReferralCode(row);
     await this.vendorReferral.applyVendorReferralReward(row);
+    if (row.servicesJson) {
+      await this.catalog.syncVendorOfferingsFromServicesJson(row.id, row.servicesJson);
+    }
     await this.audit.log({
       actorSub,
       action: 'CREATE',
@@ -489,6 +494,9 @@ export class VendorAdminService {
       row.vendorType = dto.vendorKind === 'service' ? 'SERVICE' : 'PRODUCT';
     }
     await repo.save(row);
+    if (dto.servicesJson !== undefined) {
+      await this.catalog.syncVendorOfferingsFromServicesJson(row.id, row.servicesJson);
+    }
     await this.audit.log({
       actorSub,
       action: 'UPDATE',

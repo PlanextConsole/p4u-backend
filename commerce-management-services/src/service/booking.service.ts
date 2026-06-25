@@ -83,10 +83,24 @@ export class BookingService {
     });
     if (dup > 0) throw new Error('That time slot is no longer available');
 
+    const meta: Record<string, unknown> =
+      data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)
+        ? { ...(data.metadata as Record<string, unknown>) }
+        : {};
+    const sid = String(data.serviceId || '').trim();
+    if (sid && !meta.serviceName) {
+      const item = await AppDataSource.getRepository(CatalogServiceItem).findOne({
+        where: { id: sid },
+        select: ['id', 'name'],
+      });
+      if (item?.name) meta.serviceName = item.name;
+    }
+
     const row = this.repo.create({
       ...data,
       customerId,
       status: 'pending',
+      metadata: Object.keys(meta).length ? meta : null,
     });
     return this.repo.save(row);
   }
