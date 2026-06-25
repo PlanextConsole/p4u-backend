@@ -48,6 +48,8 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
     'vendor.portal.referral.read',
     'vendor.portal.service.read',
     'vendor.portal.service.write',
+    'vendor.portal.booking.read',
+    'vendor.portal.booking.write',
   ],
   CUSTOMER: [
     'vendor.register',

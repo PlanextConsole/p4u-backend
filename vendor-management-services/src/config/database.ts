@@ -19,6 +19,7 @@ import { VendorDropshippingSettings } from '../entities/VendorDropshippingSettin
 import { DropshippingOrder } from '../entities/DropshippingOrder';
 import { PlatformSettings } from '../entities/PlatformSettings';
 import { UserNotification } from '../entities/UserNotification';
+import { Booking } from '../entities/Booking';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -48,6 +49,7 @@ export const AppDataSource = new DataSource({
     DropshippingOrder,
     PlatformSettings,
     UserNotification,
+    Booking,
   ],
   // Disable implicit DDL by default to avoid cross-service schema drift.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',

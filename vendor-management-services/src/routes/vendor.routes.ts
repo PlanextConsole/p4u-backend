@@ -18,6 +18,8 @@ import { VendorOfferedServicesService } from '../service/vendorOfferedServices.s
 import { VendorBookingAvailabilityService } from '../service/vendorBookingAvailability.service';
 import { VendorMediaService } from '../service/vendorMedia.service';
 import { VendorDropshippingService } from '../service/vendorDropshipping.service';
+import { VendorBookingsService } from '../service/vendorBookings.service';
+import { PatchVendorBookingStatusDto } from '../dto/patch-vendor-booking-status.dto';
 import { PutVendorDropshippingSettingsDto, PatchDropshippingOrderStatusDto } from '../dto/put-vendor-dropshipping-settings.dto';
 import { vendorImageUpload } from '../config/vendorImageUpload';
 import { createVendorMediaUpload, vendorMediaPublicUrl } from '../config/vendorMediaUpload';
@@ -53,6 +55,7 @@ export function createVendorRoutes(): Router {
   const bookingAvailSvc = new VendorBookingAvailabilityService();
   const mediaSvc = new VendorMediaService();
   const dropshipSvc = new VendorDropshippingService();
+  const bookingSvc = new VendorBookingsService();
 
   router.get('/public/health', (_req: Request, res: Response) => {
     sendSuccess(res, {
@@ -245,6 +248,62 @@ export function createVendorRoutes(): Router {
 
   router.patch('/orders/individual/:orderId', ...orderWrite, patchOrderHandler);
   router.patch('/orders/:orderId', ...orderWrite, patchOrderHandler);
+
+  const bookingRead = [requirePermission('vendor.portal.booking.read')];
+  const bookingWrite = [requirePermission('vendor.portal.booking.write')];
+
+  const getBooking = async (req: Request, res: Response) => {
+    const vendorId = await requireVendorId(req, res, svc);
+    if (!vendorId) return;
+    try {
+      const row = await bookingSvc.getForVendor(vendorId, req.params.bookingId);
+      if (!row) return sendNotFound(res, 'Booking not found');
+      sendSuccess(res, row);
+    } catch (e: any) {
+      sendBadRequest(res, e.message || 'Failed to load booking');
+    }
+  };
+
+  router.get(
+    '/bookings',
+    ...bookingRead,
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const { limit, offset } = parsePaging(req);
+      const status = req.query.status ? String(req.query.status) : undefined;
+      try {
+        const data = await bookingSvc.listForVendor(vendorId, limit, offset, status);
+        sendSuccess(res, data);
+      } catch (e: any) {
+        sendBadRequest(res, e.message || 'Failed to list bookings');
+      }
+    },
+  );
+
+  router.get('/bookings/:bookingId', ...bookingRead, getBooking);
+
+  router.patch(
+    '/bookings/:bookingId',
+    ...bookingWrite,
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      const dto = plainToClass(PatchVendorBookingStatusDto, req.body);
+      const errors = await validate(dto);
+      if (errors.length > 0) {
+        const msgs = errors.map((e) => Object.values(e.constraints || {})).flat();
+        return sendBadRequest(res, msgs.join(', '));
+      }
+      try {
+        const row = await bookingSvc.updateStatusForVendor(vendorId, req.params.bookingId, dto.status);
+        sendSuccess(res, row);
+      } catch (e: any) {
+        if (e.message === 'Booking not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e.message);
+      }
+    },
+  );
 
   const orgRead = [requirePermission('vendor.portal.org_order.read')];
   const orgWrite = [requirePermission('vendor.portal.org_order.write')];
