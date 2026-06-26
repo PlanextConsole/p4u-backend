@@ -467,10 +467,7 @@ export function createCommerceRoutes(): Router {
       const roles = (auth?.realm_access?.roles || []).map((r: string) => String(r).toUpperCase());
       try {
         if (roles.includes('ADMIN')) {
-          if (decision !== 'approved' && decision !== 'rejected') {
-            return sendBadRequest(res, 'Admin can only set approved or rejected via this route');
-          }
-          const row = await bookingSvc.reviewBookingForAdmin(req.params.bookingId, decision as 'approved' | 'rejected');
+          const row = await bookingSvc.updateBookingStatusForAdmin(req.params.bookingId, decision);
           return sendSuccess(res, row);
         }
         const vendorId = await resolveVendorIdFromAuth(auth);

@@ -210,6 +210,13 @@ export class BookingService {
     return this.repo.save(row);
   }
 
+  /** Admin can set any valid booking lifecycle status (same rules as vendor, without vendor scope). */
+  async updateBookingStatusForAdmin(bookingId: string, nextStatus: string): Promise<Booking> {
+    const row = await this.repo.findOne({ where: { id: bookingId } });
+    if (!row) throw new Error('Booking not found');
+    return this.updateBookingStatusForVendor(row.vendorId, bookingId, nextStatus);
+  }
+
   async deleteBookingForAdmin(bookingId: string): Promise<void> {
     const result = await this.repo.delete({ id: bookingId });
     if (!result.affected) throw new Error('Booking not found');
