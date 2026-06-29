@@ -48,6 +48,10 @@ import { AdminPushNotificationSend } from '../modules/push-notifications/entitie
 import { MediaLibraryFolder } from '../modules/media-library/entities/MediaLibraryFolder';
 import { MediaLibraryAsset } from '../modules/media-library/entities/MediaLibraryAsset';
 import { AdminBulkUploadJob } from '../modules/file-uploads/entities/AdminBulkUploadJob';
+import { AdminSocialPost } from '../modules/social/entities/AdminSocialPost';
+import { AdminSocialStory } from '../modules/social/entities/AdminSocialStory';
+import { AdminSocialUserFollow } from '../modules/social/entities/AdminSocialUserFollow';
+import { AdminSocialMedia } from '../modules/social/entities/AdminSocialMedia';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -106,6 +110,10 @@ export const AppDataSource = new DataSource({
     MediaLibraryFolder,
     MediaLibraryAsset,
     AdminBulkUploadJob,
+    AdminSocialPost,
+    AdminSocialStory,
+    AdminSocialUserFollow,
+    AdminSocialMedia,
   ],
   // Prevent accidental DDL races across services; enable only when explicitly requested.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',

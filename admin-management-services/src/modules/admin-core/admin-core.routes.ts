@@ -14,6 +14,7 @@ import { createOrganizationOrdersAdminRoutes } from '../organization-orders/orga
 import { createPlatformConfigAdminRoutes } from '../platform-config/platform-config.routes';
 import { createBannersAdminRoutes } from '../banners/banners.routes';
 import { createPostsAdminRoutes } from '../posts/posts.routes';
+import { createSocialAdminRoutes } from '../social/social-admin.routes';
 import { createVendorReviewsAdminRoutes } from '../vendor-reviews/vendor-reviews.routes';
 import { createClassifiedAdminRoutes } from '../classified/classified.routes';
 import { createPosAdminRoutes } from '../pos/pos.routes';
@@ -68,6 +69,7 @@ export const createAdminRoutes = (): Router => {
   router.use(createPlatformConfigAdminRoutes());
   router.use(createBannersAdminRoutes());
   router.use(createPostsAdminRoutes());
+  router.use(createSocialAdminRoutes());
   router.use(createVendorReviewsAdminRoutes());
   router.use(createClassifiedAdminRoutes());
   router.use(createPosAdminRoutes());
