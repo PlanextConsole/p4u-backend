@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS `admin_push_notification_sends` (
   `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `body` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `deep_link` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `target_user_ids` json DEFAULT NULL,
   `status` varchar(24) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'sent',
   `provider_detail` text COLLATE utf8mb4_unicode_ci,
   `actor_sub` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
