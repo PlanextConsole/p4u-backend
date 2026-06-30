@@ -78,6 +78,31 @@ export class InteractionService {
   }
 
   async addComment(userId: string, postId: string, data: { contentText: string; parentCommentId?: string }) {
+    const postRepo = AppDataSource.getRepository(SocialPost);
+    const post = await postRepo.findOne({ where: { id: postId, status: 'published' } });
+    if (!post) {
+      const err = new Error('Post not found');
+      (err as Error & { statusCode?: number }).statusCode = 404;
+      throw err;
+    }
+
+    const meta =
+      post.metadata && typeof post.metadata === 'object' ? (post.metadata as Record<string, unknown>) : {};
+    const permission = String(meta.commentPermission || 'everyone').toLowerCase();
+    if (permission === 'none' && post.authorId !== userId) {
+      const err = new Error('Comments are disabled on this post');
+      (err as Error & { statusCode?: number }).statusCode = 403;
+      throw err;
+    }
+    if (permission === 'followers' && post.authorId !== userId) {
+      const allowed = await this.isFollowing(userId, post.authorId);
+      if (!allowed) {
+        const err = new Error('Only followers can comment on this post');
+        (err as Error & { statusCode?: number }).statusCode = 403;
+        throw err;
+      }
+    }
+
     const commentRepo = AppDataSource.getRepository(PostComment);
     const comment = await commentRepo.save(
       commentRepo.create({
@@ -89,7 +114,6 @@ export class InteractionService {
       })
     );
 
-    const postRepo = AppDataSource.getRepository(SocialPost);
     await postRepo.increment({ id: postId }, 'commentCount', 1);
 
     // Return with author info so the new comment renders the name immediately.

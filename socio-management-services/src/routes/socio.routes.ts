@@ -3,8 +3,10 @@ import { FeedService } from '../service/feed.service';
 import { InteractionService } from '../service/interaction.service';
 import { StoryService } from '../service/story.service';
 import { SocioProfileService } from '../service/socioProfile.service';
+import { MessageService } from '../service/message.service';
+import { SocioSettingsService } from '../service/socioSettings.service';
 import { jwtAuth, requireAnyRole, requirePermission } from '../middleware/authMiddleware';
-import { sendSuccess, sendCreated, sendNotFound, sendBadRequest } from '../middleware/responseEnvelope';
+import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden } from '../middleware/responseEnvelope';
 
 const userIdFromAuth = (req: Request): string | null => {
   const auth = (req as any).auth;
@@ -26,6 +28,10 @@ const handleInteractionError = (res: Response, err: unknown): boolean => {
     sendNotFound(res, message);
     return true;
   }
+  if (statusCode === 403) {
+    sendForbidden(res, message);
+    return true;
+  }
   return false;
 };
 
@@ -44,6 +50,8 @@ export function createSocioRoutes(): Router {
   const interactionSvc = new InteractionService();
   const storySvc = new StoryService();
   const profileSvc = new SocioProfileService();
+  const messageSvc = new MessageService();
+  const settingsSvc = new SocioSettingsService();
 
   /* ───── public health ───── */
   router.get('/public/health', (_req: Request, res: Response) => {
@@ -143,7 +151,18 @@ export function createSocioRoutes(): Router {
     async (req: Request, res: Response) => {
       const userId = userIdFromAuth(req);
       if (!userId) return sendBadRequest(res, 'user id missing in token');
-      const { contentText, mediaUrls, postType, visibility, location, tags } = req.body ?? {};
+      const {
+        contentText,
+        mediaUrls,
+        postType,
+        visibility,
+        location,
+        tags,
+        category,
+        linkedProducts,
+        hideLikeCount,
+        commentPermission,
+      } = req.body ?? {};
       const tagList = Array.isArray(tags)
         ? tags.map((t: unknown) => String(t))
         : typeof tags === 'string'
@@ -156,6 +175,10 @@ export function createSocioRoutes(): Router {
         visibility,
         location,
         tags: tagList,
+        category,
+        linkedProducts,
+        hideLikeCount: Boolean(hideLikeCount),
+        commentPermission,
       });
       sendCreated(res, post);
     }
@@ -274,8 +297,13 @@ export function createSocioRoutes(): Router {
       if (!userId) return sendBadRequest(res, 'user id missing in token');
       const { contentText, parentCommentId } = req.body ?? {};
       if (!contentText) return sendBadRequest(res, 'contentText is required');
-      const comment = await interactionSvc.addComment(userId, req.params.postId, { contentText, parentCommentId });
-      sendCreated(res, comment);
+      try {
+        const comment = await interactionSvc.addComment(userId, req.params.postId, { contentText, parentCommentId });
+        sendCreated(res, comment);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
     }
   );
 
@@ -462,6 +490,126 @@ export function createSocioRoutes(): Router {
         throw err;
       }
     }
+  );
+
+  /* ───── Direct messages ───── */
+  router.get(
+    '/messages/conversations',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const q = String(req.query.q ?? '').trim();
+      const items = await messageSvc.listConversations(userId, q || undefined);
+      sendSuccess(res, items);
+    },
+  );
+
+  router.post(
+    '/messages/conversations',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const participantId = String(req.body?.participantId ?? '').trim();
+      if (!participantId) return sendBadRequest(res, 'participantId is required');
+      try {
+        const conversation = await messageSvc.openConversation(userId, participantId);
+        sendCreated(res, conversation);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
+    },
+  );
+
+  router.get(
+    '/messages/conversations/:conversationId/messages',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const limitRaw = parseInt(String(req.query.limit ?? '50'), 10);
+      const limit = Number.isNaN(limitRaw) ? 50 : limitRaw;
+      const items = await messageSvc.listMessages(userId, req.params.conversationId, limit);
+      sendSuccess(res, items);
+    },
+  );
+
+  router.post(
+    '/messages/conversations/:conversationId/messages',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const { content, mediaUrl, mediaType } = req.body ?? {};
+      try {
+        const message = await messageSvc.sendMessage(userId, req.params.conversationId, { content, mediaUrl, mediaType });
+        sendCreated(res, message);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
+    },
+  );
+
+  router.post(
+    '/messages/conversations/:conversationId/read',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      await messageSvc.markConversationRead(userId, req.params.conversationId);
+      sendSuccess(res, { ok: true });
+    },
+  );
+
+  router.post(
+    '/messages/conversations/:conversationId/typing',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const isTyping = Boolean(req.body?.isTyping);
+      await messageSvc.sendTyping(userId, req.params.conversationId, isTyping);
+      sendSuccess(res, { ok: true });
+    },
+  );
+
+  /* ───── Social settings ───── */
+  router.get(
+    '/users/me/settings',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const settings = await settingsSvc.getSettings(userId);
+      sendSuccess(res, settings);
+    },
+  );
+
+  router.patch(
+    '/users/me/settings',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const settings = await settingsSvc.updateSettings(userId, req.body ?? {});
+        sendSuccess(res, settings);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
+    },
   );
 
   return router;

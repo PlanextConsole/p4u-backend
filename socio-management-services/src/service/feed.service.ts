@@ -37,12 +37,24 @@ export class FeedService {
       visibility?: string;
       location?: string;
       tags?: string[];
+      category?: string;
+      linkedProducts?: unknown[];
+      hideLikeCount?: boolean;
+      commentPermission?: string;
     },
   ) {
     const repo = AppDataSource.getRepository(SocialPost);
     const metadata: Record<string, unknown> = {};
     if (data.location?.trim()) metadata.location = data.location.trim();
     if (data.tags?.length) metadata.tags = data.tags.map((t) => t.trim()).filter(Boolean);
+    if (data.category?.trim()) metadata.category = data.category.trim();
+    if (Array.isArray(data.linkedProducts) && data.linkedProducts.length) metadata.linkedProducts = data.linkedProducts;
+    if (data.hideLikeCount) metadata.hideLikeCount = true;
+    if (data.commentPermission === 'followers' || data.commentPermission === 'none') {
+      metadata.commentPermission = data.commentPermission;
+    } else if (data.commentPermission) {
+      metadata.commentPermission = 'everyone';
+    }
 
     const saved = await repo.save(
       repo.create({
