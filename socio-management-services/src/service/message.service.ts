@@ -4,6 +4,7 @@ import { SocialConversation } from '../entities/SocialConversation';
 import { SocialMessage } from '../entities/SocialMessage';
 import { SocialConversationState } from '../entities/SocialConversationState';
 import { InteractionService } from './interaction.service';
+import { SocioSettingsService } from './socioSettings.service';
 import { resolveAuthor, resolveAuthorMap } from './authorProfile.service';
 import { normalizeMediaUrl } from '../util/normalizeMediaUrl';
 
@@ -13,6 +14,31 @@ function pairIds(a: string, b: string): [string, string] {
 
 export class MessageService {
   private interactions = new InteractionService();
+  private settingsSvc = new SocioSettingsService();
+
+  private async assertCanMessage(senderId: string, recipientId: string) {
+    const [recipientSettings, senderSettings] = await Promise.all([
+      this.settingsSvc.getSettings(recipientId),
+      this.settingsSvc.getSettings(senderId),
+    ]);
+    if (recipientSettings.blockedUsers.includes(senderId) || senderSettings.blockedUsers.includes(recipientId)) {
+      throw Object.assign(new Error('You cannot message this account'), { statusCode: 403 });
+    }
+    const allow = recipientSettings.messageAllowFrom || 'Everyone';
+    if (allow === 'No one') {
+      throw Object.assign(new Error('This account is not accepting messages'), { statusCode: 403 });
+    }
+    if (allow === 'Everyone') return;
+    if (allow === 'People you follow') {
+      const ok = await this.interactions.isFollowing(recipientId, senderId);
+      if (!ok) throw Object.assign(new Error('This account only accepts messages from people they follow'), { statusCode: 403 });
+      return;
+    }
+    if (allow === 'Your followers') {
+      const ok = await this.interactions.isFollowing(senderId, recipientId);
+      if (!ok) throw Object.assign(new Error('This account only accepts messages from followers'), { statusCode: 403 });
+    }
+  }
 
   private async ensureState(conversationId: string, userId: string) {
     const repo = AppDataSource.getRepository(SocialConversationState);
@@ -25,13 +51,24 @@ export class MessageService {
 
   async listConversations(userId: string, q?: string) {
     const repo = AppDataSource.getRepository(SocialConversation);
-    const qb = repo
-      .createQueryBuilder('c')
-      .where('c.participant_one_id = :userId OR c.participant_two_id = :userId', { userId })
-      .orderBy('c.last_message_at', 'DESC')
-      .addOrderBy('c.created_at', 'DESC');
+    const rows = await repo.find({
+      where: [{ participantOneId: userId }, { participantTwoId: userId }],
+      order: { lastMessageAt: 'DESC', createdAt: 'DESC' },
+    });
 
-    const rows = await qb.getMany();
+    const msgRepo = AppDataSource.getRepository(SocialMessage);
+    for (const conv of rows) {
+      if (conv.lastMessageAt && conv.lastMessageText) continue;
+      const latest = await msgRepo.findOne({
+        where: { conversationId: conv.id },
+        order: { createdAt: 'DESC' },
+      });
+      if (!latest) continue;
+      const preview = latest.contentText?.trim() || (latest.mediaType === 'video' ? 'Video' : latest.mediaUrl ? 'Photo' : '');
+      conv.lastMessageText = preview || conv.lastMessageText;
+      conv.lastMessageAt = latest.createdAt;
+      await repo.save(conv);
+    }
     const stateRepo = AppDataSource.getRepository(SocialConversationState);
     const convIds = rows.map((c) => c.id);
     const states = convIds.length
@@ -72,6 +109,7 @@ export class MessageService {
     if (!participantId || participantId === userId) {
       throw Object.assign(new Error('Invalid participant'), { statusCode: 400 });
     }
+    await this.assertCanMessage(userId, participantId);
     const [one, two] = pairIds(userId, participantId);
     const repo = AppDataSource.getRepository(SocialConversation);
     let conv = await repo.findOne({ where: { participantOneId: one, participantTwoId: two } });
@@ -149,6 +187,8 @@ export class MessageService {
     }
 
     const otherId = conv.participantOneId === userId ? conv.participantTwoId : conv.participantOneId;
+    await this.assertCanMessage(userId, otherId);
+
     const msgRepo = AppDataSource.getRepository(SocialMessage);
     const saved = await msgRepo.save(
       msgRepo.create({
@@ -178,6 +218,7 @@ export class MessageService {
     await AppDataSource.getRepository(SocialConversation).save(conv);
 
     const stateRepo = AppDataSource.getRepository(SocialConversationState);
+    await this.ensureState(conversationId, userId);
     const recipientState = await this.ensureState(conversationId, otherId);
     recipientState.unreadCount = (recipientState.unreadCount || 0) + 1;
     await stateRepo.save(recipientState);

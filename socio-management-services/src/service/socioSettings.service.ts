@@ -5,18 +5,22 @@ export type SocialSettingsPayload = {
   privateAccount?: boolean;
   showActivityStatus?: boolean;
   storyReplies?: string;
+  messageAllowFrom?: string;
   commentsAllowFrom?: string;
   filterOffensiveComments?: boolean;
   notifications?: Record<string, boolean>;
   dailyTimeLimitMinutes?: number;
   dailyReminder?: boolean;
   language?: string;
+  closeFriends?: string[];
+  blockedUsers?: string[];
 };
 
 export const DEFAULT_SOCIAL_SETTINGS: Required<SocialSettingsPayload> = {
   privateAccount: false,
   showActivityStatus: true,
   storyReplies: 'Everyone',
+  messageAllowFrom: 'Everyone',
   commentsAllowFrom: 'Everyone',
   filterOffensiveComments: true,
   notifications: {
@@ -32,6 +36,8 @@ export const DEFAULT_SOCIAL_SETTINGS: Required<SocialSettingsPayload> = {
   dailyTimeLimitMinutes: 60,
   dailyReminder: true,
   language: 'English',
+  closeFriends: [],
+  blockedUsers: [],
 };
 
 function mergeSettings(raw: unknown): Required<SocialSettingsPayload> {
@@ -42,6 +48,7 @@ function mergeSettings(raw: unknown): Required<SocialSettingsPayload> {
     privateAccount: typeof src.privateAccount === 'boolean' ? src.privateAccount : base.privateAccount,
     showActivityStatus: typeof src.showActivityStatus === 'boolean' ? src.showActivityStatus : base.showActivityStatus,
     storyReplies: typeof src.storyReplies === 'string' ? src.storyReplies : base.storyReplies,
+    messageAllowFrom: typeof src.messageAllowFrom === 'string' ? src.messageAllowFrom : base.messageAllowFrom,
     commentsAllowFrom: typeof src.commentsAllowFrom === 'string' ? src.commentsAllowFrom : base.commentsAllowFrom,
     filterOffensiveComments:
       typeof src.filterOffensiveComments === 'boolean' ? src.filterOffensiveComments : base.filterOffensiveComments,
@@ -53,6 +60,12 @@ function mergeSettings(raw: unknown): Required<SocialSettingsPayload> {
       typeof src.dailyTimeLimitMinutes === 'number' ? src.dailyTimeLimitMinutes : base.dailyTimeLimitMinutes,
     dailyReminder: typeof src.dailyReminder === 'boolean' ? src.dailyReminder : base.dailyReminder,
     language: typeof src.language === 'string' ? src.language : base.language,
+    closeFriends: Array.isArray(src.closeFriends)
+      ? src.closeFriends.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : base.closeFriends,
+    blockedUsers: Array.isArray(src.blockedUsers)
+      ? src.blockedUsers.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : base.blockedUsers,
   };
 }
 
@@ -78,7 +91,13 @@ export class SocioSettingsService {
         ? { ...(profile.metadata as Record<string, unknown>) }
         : {};
     const current = mergeSettings(meta.socialSettings);
-    const next = mergeSettings({ ...current, ...patch, notifications: { ...current.notifications, ...(patch.notifications || {}) } });
+    const next = mergeSettings({
+      ...current,
+      ...patch,
+      notifications: { ...current.notifications, ...(patch.notifications || {}) },
+      closeFriends: patch.closeFriends ?? current.closeFriends,
+      blockedUsers: patch.blockedUsers ?? current.blockedUsers,
+    });
     meta.socialSettings = next;
     profile.metadata = meta;
     await repo.save(profile);
