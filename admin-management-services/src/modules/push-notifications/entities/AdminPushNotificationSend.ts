@@ -1,4 +1,4 @@
-import {
+﻿import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
@@ -26,7 +26,10 @@ export class AdminPushNotificationSend {
   @Column({ name: 'deep_link', type: 'varchar', length: 512, nullable: true })
   deepLink!: string | null;
 
-  /** queued | sent | failed — MVP records sent after persist. */
+  @Column({ name: 'target_user_ids', type: 'simple-json', nullable: true })
+  targetUserIds!: string[] | null;
+
+  /** queued | sent | failed â€” MVP records sent after persist. */
   @Column({ type: 'varchar', length: 24, default: 'sent' })
   @Index()
   status!: string;
@@ -43,3 +46,4 @@ export class AdminPushNotificationSend {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
 }
+

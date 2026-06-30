@@ -1,4 +1,4 @@
-import { AppDataSource } from '../../config/database';
+﻿import { AppDataSource } from '../../config/database';
 import { AuditService } from '../admin-core/services/audit.service';
 import { AdminPushNotificationSend } from './entities/AdminPushNotificationSend';
 import { SendPushNotificationDto } from './dto/send-push-notification.dto';
@@ -29,6 +29,7 @@ export class PushNotificationsAdminService {
       title: dto.title.trim(),
       body: dto.body.trim(),
       deepLink: dto.deepLink?.trim() || null,
+      targetUserIds: dto.targetAudience === 'specific_users' ? (dto.userIds || []).map((id) => String(id).trim()).filter(Boolean) : null,
       status: 'sent',
       providerDetail: detail,
       actorSub: actorSub ?? null,
@@ -39,9 +40,10 @@ export class PushNotificationsAdminService {
       action: 'CREATE',
       entityType: 'AdminPushNotificationSend',
       entityId: row.id,
-      metadata: { title: row.title, targetAudience: row.targetAudience },
+      metadata: { title: row.title, targetAudience: row.targetAudience, targetUserIds: row.targetUserIds },
       ipAddress: ip ?? null,
     });
     return row;
   }
 }
+
