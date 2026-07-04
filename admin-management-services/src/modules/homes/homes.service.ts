@@ -12,14 +12,6 @@ type Kind = 'amenities' | 'filterOptions' | 'localities' | 'plans' | 'properties
 
 type ListFilters = { q?: string; type?: string; status?: string; includeInactive?: boolean; limit: number; offset: number };
 
-const DEFAULT_AMENITIES: DeepPartial<HomesAmenity>[] = [];
-
-const DEFAULT_FILTERS: DeepPartial<HomesFilterOption>[] = [];
-
-const DEFAULT_LOCALITIES: DeepPartial<HomesLocality>[] = [];
-
-const DEFAULT_PROPERTIES: DeepPartial<HomesPropertyListing>[] = [];
-
 export class HomesService {
   private audit = new AuditService();
   private seeded = false;
@@ -39,6 +31,7 @@ export class HomesService {
   async ensureSeeded(): Promise<void> {
     if (this.seeded) return;
     await this.ensureSchema();
+    await this.cleanupDemoRows();
     this.seeded = true;
   }
 
@@ -151,23 +144,30 @@ export class HomesService {
       INDEX IDX_homes_cms_type (content_type),
       INDEX IDX_homes_cms_active (is_active)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
-  }
-  private async seedIfEmpty(repo: Repository<any>, rows: DeepPartial<any>[]): Promise<void> {
-    const count = await repo.count();
-    if (count > 0) return;
-    await repo.save(rows.map((row) => repo.create(row)));
+
+    await this.ensureColumn('homes_amenities', 'sort_order', 'int NOT NULL DEFAULT 0');
+    await this.ensureColumn('homes_filter_options', 'sort_order', 'int NOT NULL DEFAULT 0');
+    await this.ensureColumn('homes_cms_content', 'sort_order', 'int NOT NULL DEFAULT 0');
+    await this.ensureColumn('homes_cms_content', 'start_date', 'date NULL');
+    await this.ensureColumn('homes_cms_content', 'end_date', 'date NULL');
   }
 
-  private async ensureDefaultProperties(): Promise<void> {
-    const repo = this.repo('properties');
-    for (const property of DEFAULT_PROPERTIES) {
-      const title = String(property.title || '');
-      if (!title) continue;
-      const exists = await repo.findOne({ where: { title } });
-      if (!exists) await repo.save(repo.create(property));
-    }
+  private async ensureColumn(table: string, column: string, definition: string): Promise<void> {
+    const rows = await AppDataSource.query(
+      'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+      [table, column]
+    );
+    if (Array.isArray(rows) && rows.length > 0) return;
+    await AppDataSource.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
   }
 
+  private async cleanupDemoRows(): Promise<void> {
+    await AppDataSource.query("DELETE FROM homes_plans WHERE (name = 'Free' AND description = 'Basic listing plan') OR (name = 'Standard' AND description = 'Standard listing plan with more features') OR (name = 'Premium' AND description = 'Premium plan with unlimited features')");
+    await AppDataSource.query("DELETE FROM homes_property_listings WHERE posted_by LIKE 'Rahul Sharma%' OR title IN ('2 BHK Apartment in Beach Road Nagercoil','Luxurious 4 BHK Villa with Garden in Saibaba Colony','1 BHK Semi-Furnished near Gandhipuram Bus Stand','PG for Working Women in Peelamedu','2 BHK Fully Furnished Apartment in RS Puram','Furnished Office Space in Gandhipuram - 1500 sq.ft','3 BHK Independent House in Singanallur','Commercial Shop near T Nagar Main Road','Residential Plot in Vadavalli')");
+    await AppDataSource.query("DELETE FROM homes_localities WHERE (city = 'Coimbatore' AND name IN ('RS Puram','Gandhipuram','Peelamedu','Saibaba Colony','Singanalur','Singanallur','Ganapathy','Vadavalli','Thudiyalur')) OR (city = 'Chennai' AND name IN ('Anna Nagar','T Nagar'))");
+    await AppDataSource.query("DELETE FROM homes_amenities WHERE name IN ('Security Guard','CCTV','Gated Community','Swimming Pool','Gym','Clubhouse','Children Play Area')");
+    await AppDataSource.query("DELETE FROM homes_filter_options WHERE (filter_type = 'Furnishing' AND label = 'Unfurnished') OR (filter_type = 'Bhk' AND label = 'Studio') OR (filter_type = 'Tenant Preference' AND label = 'Family') OR (filter_type = 'Age' AND label = 'Under Construction') OR (filter_type = 'Property Type' AND label IN ('Apartment','Independent House')) OR (filter_type = 'Facing' AND label IN ('North','South'))");
+  }
   async listPropertyUsers(filters: ListFilters): Promise<{ items: any[]; total: number }> {
     await this.ensureSeeded();
     const properties = await this.repo('properties').find({ order: { createdAt: 'DESC' } });
@@ -353,6 +353,7 @@ export class HomesService {
     if (kind === 'filterOptions') qb.orderBy('x.filterType', 'ASC').addOrderBy('x.sortOrder', 'ASC');
     else if (kind === 'plans') qb.orderBy('x.planType', 'ASC').addOrderBy('x.price', 'ASC');
     else if (kind === 'properties') qb.orderBy('x.createdAt', 'DESC');
+    else if (kind === 'localities') qb.orderBy('x.city', 'ASC').addOrderBy('x.name', 'ASC');
     else qb.orderBy('x.sortOrder', 'ASC').addOrderBy('x.createdAt', 'DESC');
 
     const [items, total] = await qb.getManyAndCount();
