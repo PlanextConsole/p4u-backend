@@ -12,52 +12,13 @@ type Kind = 'amenities' | 'filterOptions' | 'localities' | 'plans' | 'properties
 
 type ListFilters = { q?: string; type?: string; status?: string; includeInactive?: boolean; limit: number; offset: number };
 
-const DEFAULT_AMENITIES: DeepPartial<HomesAmenity>[] = [
-  { name: 'Security Guard', icon: 'shield', category: 'Security', sortOrder: 1, isActive: true },
-  { name: 'CCTV', icon: 'camera', category: 'Security', sortOrder: 2, isActive: true },
-  { name: 'Gated Community', icon: 'lock', category: 'Security', sortOrder: 3, isActive: true },
-  { name: 'Swimming Pool', icon: 'waves', category: 'Recreation', sortOrder: 4, isActive: true },
-  { name: 'Gym', icon: 'dumbbell', category: 'Recreation', sortOrder: 5, isActive: true },
-  { name: 'Clubhouse', icon: 'users', category: 'Recreation', sortOrder: 6, isActive: true },
-  { name: 'Children Play Area', icon: 'baby', category: 'Recreation', sortOrder: 7, isActive: true },
-];
+const DEFAULT_AMENITIES: DeepPartial<HomesAmenity>[] = [];
 
-const DEFAULT_FILTERS: DeepPartial<HomesFilterOption>[] = [
-  { filterType: 'Furnishing', label: 'Unfurnished', value: 'unfurnished', sortOrder: 1, isActive: true },
-  { filterType: 'Bhk', label: 'Studio', value: 'studio', sortOrder: 1, isActive: true },
-  { filterType: 'Tenant Preference', label: 'Family', value: 'family', sortOrder: 1, isActive: true },
-  { filterType: 'Age', label: 'Under Construction', value: 'under_construction', sortOrder: 1, isActive: true },
-  { filterType: 'Property Type', label: 'Apartment', value: 'apartment', sortOrder: 1, isActive: true },
-  { filterType: 'Facing', label: 'North', value: 'north', sortOrder: 1, isActive: true },
-  { filterType: 'Facing', label: 'South', value: 'south', sortOrder: 2, isActive: true },
-  { filterType: 'Property Type', label: 'Independent House', value: 'independent_house', sortOrder: 2, isActive: true },
-];
+const DEFAULT_FILTERS: DeepPartial<HomesFilterOption>[] = [];
 
-const DEFAULT_LOCALITIES: DeepPartial<HomesLocality>[] = [
-  'RS Puram,Gandhipuram,Peelamedu,Saibaba Colony,Singanalur,Ganapathy,Vadavalli,Thudiyalur'.split(',').map((name, i) => ({ name, city: 'Coimbatore', isPopular: i < 4, sortOrder: i + 1 } as any)),
-  ['Anna Nagar', 'T Nagar'].map((name, i) => ({ name, city: 'Chennai', isPopular: true, sortOrder: i + 9 } as any)),
-].flat().map((row: any) => ({ ...row, avgRent: '0', avgSalePrice: '0', lifeScore: '0.0', isActive: true }));
+const DEFAULT_LOCALITIES: DeepPartial<HomesLocality>[] = [];
 
-const DEFAULT_PLANS: DeepPartial<HomesPlan>[] = [
-  { planType: 'owner', name: 'Free', description: 'Basic listing plan', price: '0', durationDays: 30, listingLimit: 1, contactReveals: 5, visibilityBoost: false, features: [], isActive: true },
-  { planType: 'owner', name: 'Standard', description: 'Standard listing plan with more features', price: '499', durationDays: 60, listingLimit: 5, contactReveals: 25, visibilityBoost: false, features: [], isActive: true },
-  { planType: 'owner', name: 'Premium', description: 'Premium plan with unlimited features', price: '999', durationDays: 90, listingLimit: 20, contactReveals: 100, visibilityBoost: true, features: [], isActive: true },
-];
-
-const DEFAULT_PROPERTIES: DeepPartial<HomesPropertyListing>[] = [
-  {
-    title: '2 BHK Apartment in Beach Road Nagercoil', locality: 'Beach Road', city: 'Nagercoil', listingType: 'Rent', propertyType: 'Apartment', price: '8000', postedBy: 'Rahul Sharma (owner)', photoCount: 0, moderationStatus: 'pending', isAutoFlagged: true, submittedAt: new Date('2026-04-09T10:00:00Z'),
-    details: { bhk: 2, area: '1000 sq.ft', floor: '2/-', furnishing: 'Unfurnished', parking: 'Both', facing: 'North', views: 0, enquiries: 0, deposit: '1000', description: 'Best Apartment', amenities: ['Intercom', 'Air Conditioner', 'Lift', 'Gas Pipeline', 'CCTV'] },
-  },
-  { title: 'Luxurious 4 BHK Villa with Garden in Saibaba Colony', locality: 'Saibaba Colony', city: 'Coimbatore', listingType: 'Sale', propertyType: 'Villa', price: '15000000', postedBy: 'Rahul Sharma (owner)', photoCount: 5, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-10T10:00:00Z'), details: { description: 'Premium villa with garden', verified: true } },
-  { title: '1 BHK Semi-Furnished near Gandhipuram Bus Stand', locality: 'Gandhipuram', city: 'Coimbatore', listingType: 'Rent', propertyType: 'Apartment', price: '8500', postedBy: 'Rahul Sharma (owner)', photoCount: 3, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-11T10:00:00Z'), details: { description: 'Near bus stand' } },
-  { title: 'PG for Working Women in Peelamedu', locality: 'Peelamedu', city: 'Coimbatore', listingType: 'Rent', propertyType: 'PG', price: '6500', postedBy: 'Rahul Sharma (owner)', photoCount: 4, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-12T10:00:00Z'), details: { description: 'Working women PG' } },
-  { title: '2 BHK Fully Furnished Apartment in RS Puram', locality: 'RS Puram', city: 'Coimbatore', listingType: 'Rent', propertyType: 'Apartment', price: '18000', postedBy: 'Rahul Sharma (owner)', photoCount: 6, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-13T10:00:00Z'), details: { description: 'Fully furnished' } },
-  { title: 'Furnished Office Space in Gandhipuram - 1500 sq.ft', locality: 'Gandhipuram', city: 'Coimbatore', listingType: 'Rent', propertyType: 'Office', price: '45000', postedBy: 'Rahul Sharma (owner)', photoCount: 7, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-14T10:00:00Z'), details: { description: 'Commercial office space' } },
-  { title: '3 BHK Independent House in Singanallur', locality: 'Singanallur', city: 'Coimbatore', listingType: 'Sale', propertyType: 'Independent House', price: '8500000', postedBy: 'Rahul Sharma (owner)', photoCount: 5, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-15T10:00:00Z'), details: { description: 'Independent house' } },
-  { title: 'Commercial Shop near T Nagar Main Road', locality: 'T Nagar', city: 'Chennai', listingType: 'Rent', propertyType: 'Shop', price: '55000', postedBy: 'Rahul Sharma (owner)', photoCount: 2, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-16T10:00:00Z'), details: { description: 'Main road shop' } },
-  { title: 'Residential Plot in Vadavalli', locality: 'Vadavalli', city: 'Coimbatore', listingType: 'Sale', propertyType: 'Plot', price: '4200000', postedBy: 'Rahul Sharma (owner)', photoCount: 1, moderationStatus: 'approved', isAutoFlagged: false, submittedAt: new Date('2026-04-17T10:00:00Z'), details: { description: 'Residential plot' } },
-];
+const DEFAULT_PROPERTIES: DeepPartial<HomesPropertyListing>[] = [];
 
 export class HomesService {
   private audit = new AuditService();
@@ -78,12 +39,6 @@ export class HomesService {
   async ensureSeeded(): Promise<void> {
     if (this.seeded) return;
     await this.ensureSchema();
-    await this.seedIfEmpty(this.repo('amenities'), DEFAULT_AMENITIES);
-    await this.seedIfEmpty(this.repo('filterOptions'), DEFAULT_FILTERS);
-    await this.seedIfEmpty(this.repo('localities'), DEFAULT_LOCALITIES);
-    await this.seedIfEmpty(this.repo('plans'), DEFAULT_PLANS);
-    await this.seedIfEmpty(this.repo('properties'), DEFAULT_PROPERTIES);
-    await this.ensureDefaultProperties();
     this.seeded = true;
   }
 
