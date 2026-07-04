@@ -52,6 +52,17 @@ import { AdminSocialPost } from '../modules/social/entities/AdminSocialPost';
 import { AdminSocialStory } from '../modules/social/entities/AdminSocialStory';
 import { AdminSocialUserFollow } from '../modules/social/entities/AdminSocialUserFollow';
 import { AdminSocialMedia } from '../modules/social/entities/AdminSocialMedia';
+import { HomesAmenity } from '../modules/homes/entities/HomesAmenity';
+import { HomesFilterOption } from '../modules/homes/entities/HomesFilterOption';
+import { HomesLocality } from '../modules/homes/entities/HomesLocality';
+import { HomesPlan } from '../modules/homes/entities/HomesPlan';
+import { HomesPropertyListing } from '../modules/homes/entities/HomesPropertyListing';
+import { HomesCmsContent } from '../modules/homes/entities/HomesCmsContent';
+import { FoodRestaurant } from '../modules/food/entities/FoodRestaurant';
+import { FoodRider } from '../modules/food/entities/FoodRider';
+import { FoodOrder } from '../modules/food/entities/FoodOrder';
+import { FoodCoupon } from '../modules/food/entities/FoodCoupon';
+import { FoodRiderSettlement } from '../modules/food/entities/FoodRiderSettlement';
 
 export const AppDataSource = new DataSource({
   type: 'mysql',
@@ -114,6 +125,17 @@ export const AppDataSource = new DataSource({
     AdminSocialStory,
     AdminSocialUserFollow,
     AdminSocialMedia,
+    HomesAmenity,
+    HomesFilterOption,
+    HomesLocality,
+    HomesPlan,
+    HomesPropertyListing,
+    HomesCmsContent,
+    FoodRestaurant,
+    FoodRider,
+    FoodOrder,
+    FoodCoupon,
+    FoodRiderSettlement,
   ],
   // Prevent accidental DDL races across services; enable only when explicitly requested.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',

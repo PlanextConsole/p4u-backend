@@ -23,6 +23,8 @@ import { createVendorPlansAdminRoutes } from '../vendor-plans/vendor-plans.route
 import { createPushNotificationsAdminRoutes } from '../push-notifications/push-notifications.routes';
 import { createMediaLibraryAdminRoutes } from '../media-library/media-library.routes';
 import { createFileUploadsAdminRoutes } from '../file-uploads/file-uploads.routes';
+import { createHomesAdminRoutes } from '../homes/homes.routes';
+import { createFoodAdminRoutes } from '../food/food.routes';
 import { HierarchyService } from './services/hierarchy.service';
 import { LayoutService } from './services/layout.service';
 import { AuditService } from './services/audit.service';
@@ -78,6 +80,8 @@ export const createAdminRoutes = (): Router => {
   router.use(createPushNotificationsAdminRoutes());
   router.use(createMediaLibraryAdminRoutes());
   router.use(createFileUploadsAdminRoutes());
+  router.use(createHomesAdminRoutes());
+  router.use(createFoodAdminRoutes());
 
   const secured = Router();
   secured.use(jwtAuth);
