@@ -37,7 +37,7 @@ export const jwtAuth = expressjwt({
 const ROLE_PERMISSION_MAP: Record<string, string[]> = {
   ADMIN: ['*'],
   VENDOR: ['content.read.public', 'content.newsletter.subscribe'],
-  CUSTOMER: ['content.read.public', 'content.newsletter.subscribe'],
+  CUSTOMER: ['content.read.public', 'content.newsletter.subscribe', 'content.classified.post'],
 };
 
 const getRoles = (auth: any): string[] => {
