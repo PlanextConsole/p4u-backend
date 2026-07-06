@@ -102,6 +102,9 @@ export function createContentRoutes(): Router {
       const name = String(body.name || body.title || '').trim();
       if (!name) return sendBadRequest(res, 'Title is required');
 
+      const categoryId = typeof body.categoryId === 'string' ? body.categoryId.trim() : '';
+      if (!categoryId) return sendBadRequest(res, 'Category is required');
+
       const row = await classifiedSvc.createFromCustomer({
         customerId,
         customerName: typeof body.postedBy === 'string' ? body.postedBy : auth?.name || auth?.preferred_username || null,
@@ -109,7 +112,7 @@ export function createContentRoutes(): Router {
         name,
         description: typeof body.description === 'string' ? body.description : null,
         price: body.price,
-        categoryId: typeof body.categoryId === 'string' ? body.categoryId : null,
+        categoryId,
         city: typeof body.city === 'string' ? body.city : null,
         area: typeof body.area === 'string' ? body.area : null,
         imageUrls: Array.isArray(body.imageUrls) ? body.imageUrls.map(String) : null,

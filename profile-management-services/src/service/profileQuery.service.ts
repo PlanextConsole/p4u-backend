@@ -28,6 +28,10 @@ export class ProfileQueryService {
       const p = patch.phone;
       row.phone = p === null || p === '' ? null : String(p);
     }
+    if (patch.occupationId !== undefined) {
+      const occ = patch.occupationId;
+      row.occupationId = occ === null || occ === '' ? null : String(occ);
+    }
 
     const prev =
       row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)

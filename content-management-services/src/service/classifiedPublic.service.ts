@@ -91,7 +91,14 @@ export class ClassifiedPublicService {
   async listCategories(): Promise<{ id: string; name: string }[]> {
     const rows = await AppDataSource.getRepository(ClassifiedCategory).find({
       where: { isActive: true },
-      order: { name: 'ASC' },
+    });
+    rows.sort((a, b) => {
+      const metaA = metaRecord(a.metadata);
+      const metaB = metaRecord(b.metadata);
+      const orderA = typeof metaA.sortOrder === 'number' ? metaA.sortOrder : 9999;
+      const orderB = typeof metaB.sortOrder === 'number' ? metaB.sortOrder : 9999;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.name.localeCompare(b.name, 'en', { sensitivity: 'base' });
     });
     return rows.map((r) => ({ id: r.id, name: r.name }));
   }
@@ -157,12 +164,23 @@ export class ClassifiedPublicService {
     const title = payload.name.trim();
     if (!title) throw new Error('Title is required');
 
+    const categoryId = (payload.categoryId || '').trim();
+    if (!categoryId) throw new Error('Category is required');
+
+    const category = await AppDataSource.getRepository(ClassifiedCategory).findOne({
+      where: { id: categoryId, isActive: true },
+    });
+    if (!category) throw new Error('Selected category is invalid');
+
     const meta: Record<string, unknown> = {
       city: payload.city?.trim() || null,
       area: payload.area?.trim() || null,
       contactPhone: payload.contactPhone?.trim() || payload.customerPhone?.trim() || null,
       postedBy: payload.customerName?.trim() || 'Member',
       customerId: payload.customerId,
+      categoryId,
+      categoryName: category.name,
+      category: category.name,
       approvalStatus: 'pending',
       status: 'pending',
       source: 'user-web',
@@ -170,24 +188,16 @@ export class ClassifiedPublicService {
 
     const row = repo.create({
       vendorId: null,
-      categoryId: payload.categoryId ?? null,
+      categoryId,
       serviceId: null,
       name: title,
       description: payload.description?.trim() || null,
       price: String(payload.price ?? '0'),
       imageUrls: payload.imageUrls?.length ? payload.imageUrls : null,
-      isActive: false,
+      isActive: true,
       metadata: meta,
     });
     const saved = await repo.save(row);
-
-    let categoryName: string | null = null;
-    if (saved.categoryId) {
-      const cat = await AppDataSource.getRepository(ClassifiedCategory).findOne({
-        where: { id: saved.categoryId },
-      });
-      categoryName = cat?.name ?? null;
-    }
-    return mapRow(saved, categoryName);
+    return mapRow(saved, category.name);
   }
 }
