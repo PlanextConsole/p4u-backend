@@ -25,7 +25,24 @@ export type PublicClassifiedAd = {
 };
 
 function metaRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  if (!value) return {};
+  // The `metadata` column may arrive as a native object (json column) OR as a
+  // JSON string (TEXT column / double-encoded rows from schema drift). Parse both
+  // so approvalStatus/city/postedBy are read consistently — a string that isn't
+  // parsed here is exactly what caused approved ads to stay hidden.
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 }
 
@@ -72,18 +89,6 @@ function isPubliclyVisible(row: ClassifiedProduct): boolean {
   if (status === null) return row.isActive === true;
   return false; // pending, rejected, or any other explicit non-approved state
 }
-
-/**
- * SQL predicate mirroring {@link isPubliclyVisible} for the `classified_products`
- * query builder (alias `c`). Reads the moderation status out of the JSON
- * `metadata` column and treats never-moderated rows as gated on `is_active`.
- */
-const VISIBLE_SQL =
-  "(JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.approvalStatus')) = 'approved' " +
-  "OR JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.status')) = 'approved' " +
-  "OR (c.isActive = true AND COALESCE(" +
-  "JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.approvalStatus')), " +
-  "JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.status'))) IS NULL))";
 
 function mapRow(row: ClassifiedProduct, categoryName?: string | null): PublicClassifiedAd {
   const meta = metaRecord(row.metadata);
@@ -142,10 +147,9 @@ export class ClassifiedPublicService {
     const repo = AppDataSource.getRepository(ClassifiedProduct);
     const qb = repo
       .createQueryBuilder('c')
-      .where(VISIBLE_SQL)
       .orderBy('c.updatedAt', 'DESC')
-      .limit(paging.limit)
-      .offset(paging.offset);
+      // Safety cap: classifieds volume is small; we filter visibility in JS below.
+      .limit(2000);
 
     const q = (filters?.q || '').trim();
     if (q) {
@@ -156,10 +160,17 @@ export class ClassifiedPublicService {
       qb.andWhere('c.categoryId = :categoryId', { categoryId });
     }
 
-    const [rows, total] = await qb.getManyAndCount();
-    const catMap = await this.categoryMap(rows.map((r) => r.categoryId));
+    // Gate visibility in JS on the entity objects — an ad is public when the admin
+    // has approved it (metadata.approvalStatus/status === 'approved'), regardless of
+    // the overloaded `isActive` flag. Doing this in JS avoids any raw-SQL column-name
+    // pitfalls with the JSON metadata column.
+    const all = await qb.getMany();
+    const visible = all.filter(isPubliclyVisible);
+    const total = visible.length;
+    const pageRows = visible.slice(paging.offset, paging.offset + paging.limit);
+    const catMap = await this.categoryMap(pageRows.map((r) => r.categoryId));
     return {
-      items: rows.map((r) => mapRow(r, r.categoryId ? catMap.get(r.categoryId) ?? null : null)),
+      items: pageRows.map((r) => mapRow(r, r.categoryId ? catMap.get(r.categoryId) ?? null : null)),
       total,
     };
   }
