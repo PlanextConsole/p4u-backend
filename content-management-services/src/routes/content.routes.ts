@@ -17,6 +17,12 @@ export function createContentRoutes(): Router {
       offset: Number.isNaN(offsetRaw) ? 0 : Math.max(offsetRaw, 0),
     };
   };
+  const cleanQueryParam = (value: unknown): string | undefined => {
+    if (value == null) return undefined;
+    const s = String(value).trim();
+    if (!s || s === 'undefined' || s === 'null') return undefined;
+    return s;
+  };
   const includeInactive = (req: Request) =>
     req.query.includeInactive === 'true' || req.query.purpose === 'all';
 
@@ -83,8 +89,8 @@ export function createContentRoutes(): Router {
         return;
       }
       const paging = parsePaging(req);
-      const q = req.query.q ? String(req.query.q) : undefined;
-      const categoryId = req.query.categoryId ? String(req.query.categoryId) : undefined;
+      const q = cleanQueryParam(req.query.q);
+      const categoryId = cleanQueryParam(req.query.categoryId);
       const data = await classifiedSvc.listPublic(paging, { q, categoryId });
       sendSuccess(res, data, 200, { total: data.total, limit: paging.limit, offset: paging.offset });
     } catch (e: any) {
