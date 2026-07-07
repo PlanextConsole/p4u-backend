@@ -96,6 +96,27 @@ export class VendorMediaService {
     return repo.save(row);
   }
 
+  /** Delete a folder together with all its assets (DB rows + local files). */
+  async deleteFolder(vendorId: string, folderId: string): Promise<void> {
+    const folder = await this.getFolder(vendorId, folderId);
+    if (!folder) throw new Error('Folder not found');
+    const assetRepo = AppDataSource.getRepository(VendorMediaAsset);
+    const assets = await assetRepo.find({ where: { vendorId, folderId } });
+    for (const asset of assets) {
+      const rel = asset.url.replace(/^\/vendor-uploads\//, '');
+      const diskPath = path.join(process.cwd(), 'uploads', rel);
+      if (fs.existsSync(diskPath)) {
+        try {
+          fs.unlinkSync(diskPath);
+        } catch {
+          /* ignore disk cleanup errors */
+        }
+      }
+    }
+    if (assets.length) await assetRepo.remove(assets);
+    await AppDataSource.getRepository(VendorMediaFolder).remove(folder);
+  }
+
   async deleteAsset(vendorId: string, assetId: string): Promise<void> {
     const repo = AppDataSource.getRepository(VendorMediaAsset);
     const row = await repo.findOne({ where: { id: assetId } });

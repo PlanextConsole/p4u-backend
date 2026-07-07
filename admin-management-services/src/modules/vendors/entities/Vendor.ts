@@ -9,8 +9,8 @@ import {
 
 export type VendorStatus = 'pending' | 'active' | 'suspended' | 'rejected' | 'not_verified';
 export type VendorKycStatus = 'not_started' | 'in_progress' | 'submitted' | 'verified' | 'rejected';
-export type VendorKind = 'product' | 'service';
-export type VendorType = 'PRODUCT' | 'SERVICE';
+export type VendorKind = 'product' | 'service' | 'both';
+export type VendorType = 'PRODUCT' | 'SERVICE' | 'both' | 'BOTH';
 
 @Entity('catalog_vendors')
 export class Vendor {

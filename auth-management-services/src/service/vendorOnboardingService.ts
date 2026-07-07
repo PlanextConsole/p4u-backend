@@ -40,12 +40,17 @@ export interface VendorOnboardingRecord {
   payload: Record<string, unknown>;
 }
 
-const ALLOWED_TYPES = new Set(['SERVICE', 'PRODUCT']);
+const ALLOWED_TYPES = new Set(['SERVICE', 'PRODUCT', 'BOTH']);
 
-function normalizeVendorType(value: unknown): 'SERVICE' | 'PRODUCT' | null {
+function normalizeVendorType(value: unknown): 'SERVICE' | 'PRODUCT' | 'BOTH' | null {
   if (typeof value !== 'string') return null;
   const v = value.trim().toUpperCase();
-  return ALLOWED_TYPES.has(v) ? (v as 'SERVICE' | 'PRODUCT') : null;
+  return ALLOWED_TYPES.has(v) ? (v as 'SERVICE' | 'PRODUCT' | 'BOTH') : null;
+}
+
+/** Lowercase vendorKind from an uppercase vendorType. */
+function kindFromType(vendorType: 'SERVICE' | 'PRODUCT' | 'BOTH'): 'service' | 'product' | 'both' {
+  return vendorType === 'BOTH' ? 'both' : vendorType === 'SERVICE' ? 'service' : 'product';
 }
 
 /**
@@ -79,7 +84,7 @@ export class VendorOnboardingService {
   ): Promise<VendorOnboardingRecord> {
     const vendorType = normalizeVendorType(payload.vendorType ?? payload.vendorKind);
     if (!vendorType) {
-      throw new Error('vendorType is required (SERVICE or PRODUCT)');
+      throw new Error('vendorType is required (SERVICE, PRODUCT or BOTH)');
     }
     if (!payload.businessName || !String(payload.businessName).trim()) {
       throw new Error('businessName is required');
@@ -101,7 +106,7 @@ export class VendorOnboardingService {
       email: payload.email || ctx.email || user?.email || null,
       userType: 'VENDOR',
       vendorType,
-      vendorKind: vendorType === 'SERVICE' ? 'service' : 'product',
+      vendorKind: kindFromType(vendorType),
       ownerName: String(payload.ownerName).trim(),
       businessName: String(payload.businessName).trim(),
       phone: payload.phone ?? null,
@@ -146,7 +151,7 @@ export class VendorOnboardingService {
   private async upsertCatalogVendor(
     ctx: VendorOnboardingTokenContext,
     payload: VendorOnboardingPayload,
-    vendorType: 'SERVICE' | 'PRODUCT',
+    vendorType: 'SERVICE' | 'PRODUCT' | 'BOTH',
     fallbackEmail: string | null,
   ): Promise<void> {
     const existing = await this.catalogVendorRepo.findByKeycloakUserId(ctx.keycloakUserId);
@@ -164,7 +169,7 @@ export class VendorOnboardingService {
     target.documentsJson = payload.documentsJson ?? null;
     target.bankJson = payload.bankJson ?? null;
     target.vendorType = vendorType;
-    target.vendorKind = vendorType === 'SERVICE' ? 'service' : 'product';
+    target.vendorKind = kindFromType(vendorType);
 
     // Only overwrite status / kycStatus on the very first insert. Once admin
     // has touched the row we leave their decision alone — re-submitting the

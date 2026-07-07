@@ -163,8 +163,8 @@ export class CreateVendorDto {
   @MaxLength(128)
   keycloakUserId?: string | null;
 
-  /** Required. Also accepts vendorType / vendor_type PRODUCT|SERVICE (normalized in route). */
+  /** Required. Also accepts vendorType / vendor_type PRODUCT|SERVICE|BOTH (normalized in route). */
   @IsNotEmpty({ message: 'Vendor type is required' })
-  @IsIn(['product', 'service'], { message: 'Vendor type must be product or service' })
-  vendorKind!: 'product' | 'service';
+  @IsIn(['product', 'service', 'both'], { message: 'Vendor type must be product, service or both' })
+  vendorKind!: 'product' | 'service' | 'both';
 }

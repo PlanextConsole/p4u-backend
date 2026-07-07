@@ -200,6 +200,41 @@ export class MediaLibraryAdminService {
     });
   }
 
+  /** Delete a folder along with all its assets (DB rows + local files on disk). */
+  async deleteFolder(id: string, actorSub: string | undefined, ip: string | undefined): Promise<void> {
+    const folder = await this.getFolder(id);
+    if (!folder) throw new Error('Folder not found');
+    const repo = this.assetRepo();
+    const assets = await repo.find({ where: { folderId: id } });
+    for (const asset of assets) {
+      if (asset.storageKind === 'local' && asset.relativePath) {
+        const abs = path.join(UPLOAD_DIR, asset.relativePath);
+        try {
+          if (fs.existsSync(abs)) fs.unlinkSync(abs);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (assets.length) await repo.remove(assets);
+    // Remove the folder's directory on disk (best effort).
+    const dir = path.join(UPLOAD_DIR, 'media-library', id);
+    try {
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    await this.folderRepo().remove(folder);
+    await this.audit.log({
+      actorSub: actorSub ?? 'unknown',
+      action: 'DELETE',
+      entityType: 'MediaLibraryFolder',
+      entityId: id,
+      metadata: { name: folder.name, slug: folder.slug, assetsRemoved: assets.length },
+      ipAddress: ip ?? null,
+    });
+  }
+
   async ingestZipToFolder(folderId: string, zipDiskPath: string): Promise<{ created: number }> {
     const folder = await this.getFolder(folderId);
     if (!folder) throw new Error('Folder not found');

@@ -144,6 +144,16 @@ export function createMediaLibraryAdminRoutes(): Router {
     }
   );
 
+  r.delete('/media-library/folders/:folderId', async (req: Request, res: Response) => {
+    try {
+      await svc.deleteFolder(req.params.folderId, getAuthSub(req), clientIp(req));
+      res.status(204).send();
+    } catch (e: any) {
+      const st = e.message === 'Folder not found' ? 404 : 400;
+      res.status(st).json({ message: e.message });
+    }
+  });
+
   r.delete('/media-library/assets/:id', async (req: Request, res: Response) => {
     try {
       await svc.deleteAsset(req.params.id, getAuthSub(req), clientIp(req));

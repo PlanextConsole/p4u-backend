@@ -967,6 +967,22 @@ export function createVendorRoutes(): Router {
     },
   );
 
+  router.delete(
+    '/me/media/folders/:folderId',
+    requirePermission('vendor.portal.me.write'),
+    async (req: Request, res: Response) => {
+      const vendorId = await requireVendorId(req, res, svc);
+      if (!vendorId) return;
+      try {
+        await mediaSvc.deleteFolder(vendorId, req.params.folderId);
+        sendSuccess(res, { ok: true });
+      } catch (e: any) {
+        if (e.message === 'Folder not found') return sendNotFound(res, e.message);
+        sendBadRequest(res, e?.message || 'Delete folder failed');
+      }
+    },
+  );
+
   // ─── Per-vendor category commission override ───
   router.patch(
     '/me/categories/:categoryId/override',

@@ -156,6 +156,6 @@ export class UpdateVendorDto {
   keycloakUserId?: string | null;
 
   @IsOptional()
-  @IsIn(['product', 'service'])
-  vendorKind?: 'product' | 'service';
+  @IsIn(['product', 'service', 'both'])
+  vendorKind?: 'product' | 'service' | 'both';
 }

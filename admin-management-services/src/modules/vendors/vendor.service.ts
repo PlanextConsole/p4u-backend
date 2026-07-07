@@ -13,6 +13,12 @@ import { CatalogAdminService } from '../catalog/catalog.service';
 
 const PENDING_VENDOR_STATUSES = ['pending', 'not_verified'] as const;
 
+/** Uppercase vendorType from a vendorKind ('product' | 'service' | 'both'). */
+function vendorTypeFromKind(kind: string | null | undefined): 'PRODUCT' | 'SERVICE' | 'BOTH' {
+  const k = String(kind || '').toLowerCase();
+  return k === 'both' ? 'BOTH' : k === 'service' ? 'SERVICE' : 'PRODUCT';
+}
+
 export interface VendorPendingApplication {
   id: string;
   catalogVendorId: string | null;
@@ -159,7 +165,7 @@ function mapSignupToPendingApplication(
     email: payload.email != null ? String(payload.email).trim() || null : null,
     phone: payload.phone != null ? String(payload.phone).trim() || null : null,
     vendorKind,
-    vendorType: vendorKind === 'service' ? 'SERVICE' : 'PRODUCT',
+    vendorType: vendorTypeFromKind(vendorKind),
     categoryLabel: categoryLabelFromPayload(payload, vendorKind),
     businessType:
       payload.businessType != null
@@ -423,7 +429,7 @@ export class VendorAdminService {
       notes: dto.notes ?? null,
       keycloakUserId: dto.keycloakUserId ?? null,
       vendorKind: dto.vendorKind,
-      vendorType: dto.vendorKind === 'service' ? 'SERVICE' : 'PRODUCT',
+      vendorType: vendorTypeFromKind(dto.vendorKind),
     });
     await repo.save(row);
     await this.vendorReferral.ensureReferralCode(row);
@@ -491,7 +497,7 @@ export class VendorAdminService {
     if (dto.keycloakUserId !== undefined) row.keycloakUserId = dto.keycloakUserId;
     if (dto.vendorKind !== undefined) {
       row.vendorKind = dto.vendorKind;
-      row.vendorType = dto.vendorKind === 'service' ? 'SERVICE' : 'PRODUCT';
+      row.vendorType = vendorTypeFromKind(dto.vendorKind);
     }
     await repo.save(row);
     if (dto.servicesJson !== undefined) {

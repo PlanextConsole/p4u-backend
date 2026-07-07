@@ -20,10 +20,11 @@ export function parseVendorKindFilter(req: Request): 'product' | 'service' | und
 /** Maps body.vendorType / vendor_type (uppercase) onto vendorKind before DTO validation. */
 export function normalizeVendorWriteBody(body: Record<string, unknown>): Record<string, unknown> {
   const b = { ...(body || {}) };
-  if (b.vendorKind !== 'product' && b.vendorKind !== 'service') {
+  if (b.vendorKind !== 'product' && b.vendorKind !== 'service' && b.vendorKind !== 'both') {
     const u = String(b.vendorType ?? b.vendor_type ?? '').trim().toUpperCase();
     if (u === 'PRODUCT') b.vendorKind = 'product';
     else if (u === 'SERVICE') b.vendorKind = 'service';
+    else if (u === 'BOTH') b.vendorKind = 'both';
   }
   if (b.phone != null && String(b.phone).trim()) {
     const digits = String(b.phone).replace(/\D/g, '');
@@ -38,8 +39,13 @@ export function normalizeVendorWriteBody(body: Record<string, unknown>): Record<
 export function serializeVendorRow(v: Vendor): Record<string, unknown> {
   const normalizedKind = String(v.vendorKind || '').trim().toLowerCase();
   const normalizedType = String(v.vendorType || '').trim().toUpperCase();
-  const vendorKind = normalizedKind === 'service' || normalizedType === 'SERVICE' ? 'service' : 'product';
-  const vendorType = vendorKind === 'service' ? 'SERVICE' : 'PRODUCT';
+  const vendorKind =
+    normalizedKind === 'both' || normalizedType === 'BOTH'
+      ? 'both'
+      : normalizedKind === 'service' || normalizedType === 'SERVICE'
+        ? 'service'
+        : 'product';
+  const vendorType = vendorKind === 'both' ? 'BOTH' : vendorKind === 'service' ? 'SERVICE' : 'PRODUCT';
   const docs = v.documentsJson && typeof v.documentsJson === 'object' ? v.documentsJson : {};
   const vendorRef =
     typeof (docs as Record<string, unknown>).vendorRef === 'string'

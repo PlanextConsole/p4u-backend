@@ -94,6 +94,17 @@ export function createSocioRoutes(): Router {
   );
 
   router.get(
+    '/feed/ads',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const { limit } = parsePaging(req);
+      const items = await feedSvc.getSocioAds(limit);
+      sendSuccess(res, items);
+    }
+  );
+
+  router.get(
     '/posts/saved',
     requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
     requirePermission('social.feed.read'),

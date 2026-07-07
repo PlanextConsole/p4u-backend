@@ -53,6 +53,38 @@ function formatIso(value: Date | string | null | undefined): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/** Effective moderation status recorded by the admin console, or null when never moderated. */
+function effectiveApprovalStatus(meta: Record<string, unknown>): string | null {
+  const raw = strMeta(meta, 'approvalStatus', 'status');
+  return raw ? raw.toLowerCase() : null;
+}
+
+/**
+ * An ad is visible on the public storefront when the admin has approved it.
+ * Visibility is driven by the moderation status — NOT by `isActive`, which is
+ * overloaded (a pending ad can be `isActive:true`, and an approved ad may never
+ * have had `isActive` flipped). Legacy admin-created ads carry no moderation
+ * status; those fall back to the `isActive` flag.
+ */
+function isPubliclyVisible(row: ClassifiedProduct): boolean {
+  const status = effectiveApprovalStatus(metaRecord(row.metadata));
+  if (status === 'approved') return true;
+  if (status === null) return row.isActive === true;
+  return false; // pending, rejected, or any other explicit non-approved state
+}
+
+/**
+ * SQL predicate mirroring {@link isPubliclyVisible} for the `classified_products`
+ * query builder (alias `c`). Reads the moderation status out of the JSON
+ * `metadata` column and treats never-moderated rows as gated on `is_active`.
+ */
+const VISIBLE_SQL =
+  "(JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.approvalStatus')) = 'approved' " +
+  "OR JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.status')) = 'approved' " +
+  "OR (c.isActive = true AND COALESCE(" +
+  "JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.approvalStatus')), " +
+  "JSON_UNQUOTE(JSON_EXTRACT(c.metadata, '$.status'))) IS NULL))";
+
 function mapRow(row: ClassifiedProduct, categoryName?: string | null): PublicClassifiedAd {
   const meta = metaRecord(row.metadata);
   const images = Array.isArray(row.imageUrls) ? row.imageUrls.filter(Boolean) : [];
@@ -110,7 +142,7 @@ export class ClassifiedPublicService {
     const repo = AppDataSource.getRepository(ClassifiedProduct);
     const qb = repo
       .createQueryBuilder('c')
-      .where('c.isActive = :active', { active: true })
+      .where(VISIBLE_SQL)
       .orderBy('c.updatedAt', 'DESC')
       .limit(paging.limit)
       .offset(paging.offset);
@@ -134,9 +166,9 @@ export class ClassifiedPublicService {
 
   async getPublicById(id: string): Promise<PublicClassifiedAd | null> {
     const row = await AppDataSource.getRepository(ClassifiedProduct).findOne({
-      where: { id, isActive: true },
+      where: { id },
     });
-    if (!row) return null;
+    if (!row || !isPubliclyVisible(row)) return null;
     let categoryName: string | null = null;
     if (row.categoryId) {
       const cat = await AppDataSource.getRepository(ClassifiedCategory).findOne({

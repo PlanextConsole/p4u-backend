@@ -165,6 +165,65 @@ export class FeedService {
     return withAuthors(rows.map(withNormalizedMedia));
   }
 
+  /**
+   * Active social advertisements created in the admin console (Advertisement →
+   * Social Advertisement). These live in `content_ad_feed_items` (shared admin
+   * DB); we read them directly and surface only the ones flagged for the socio
+   * feed. Returned as lightweight "sponsored" items — NOT SocialPost rows — so
+   * the client renders them as ad cards without like/comment interactions.
+   */
+  async getSocioAds(limit: number): Promise<Array<Record<string, unknown>>> {
+    const cap = Math.max(1, Math.min(limit, 20));
+    let rows: Array<Record<string, unknown>>;
+    try {
+      rows = await AppDataSource.query(
+        `SELECT id, title, image_url AS imageUrl, redirect_url AS redirectUrl, metadata, sort_order AS sortOrder
+         FROM content_ad_feed_items
+         WHERE status = 'active'
+         ORDER BY sort_order ASC, updated_at DESC
+         LIMIT ?`,
+        [cap * 4],
+      );
+    } catch {
+      return [];
+    }
+    const parseMeta = (v: unknown): Record<string, unknown> => {
+      if (!v) return {};
+      if (typeof v === 'string') {
+        try { return JSON.parse(v) || {}; } catch { return {}; }
+      }
+      return typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+    };
+    const isSocio = (meta: Record<string, unknown>): boolean => {
+      if (meta.isSocioAd === true) return true;
+      const pages = meta.pages;
+      if (Array.isArray(pages)) return pages.map(String).includes('socio');
+      if (typeof pages === 'string') return pages.split(',').map((s) => s.trim()).includes('socio');
+      return false;
+    };
+    const out: Array<Record<string, unknown>> = [];
+    for (const r of rows) {
+      const meta = parseMeta(r.metadata);
+      if (!isSocio(meta)) continue;
+      const image =
+        (typeof meta.desktopImageUrl === 'string' && meta.desktopImageUrl) ||
+        (typeof meta.mobileImageUrl === 'string' && meta.mobileImageUrl) ||
+        (typeof r.imageUrl === 'string' ? r.imageUrl : null);
+      out.push({
+        id: `ad-${r.id}`,
+        isSponsored: true,
+        title: r.title,
+        image: image ? normalizeMediaUrl(String(image)) : null,
+        caption: (typeof meta.caption === 'string' && meta.caption) || (typeof meta.description === 'string' && meta.description) || '',
+        advertiser: typeof meta.advertiser === 'string' ? meta.advertiser : '',
+        redirectUrl: (typeof r.redirectUrl === 'string' && r.redirectUrl) || null,
+        createdAt: r.createdAt ?? null,
+      });
+      if (out.length >= cap) break;
+    }
+    return out;
+  }
+
   async getUserPosts(userId: string, limit: number, offset: number) {
     const rows = await AppDataSource.getRepository(SocialPost).find({
       where: { authorId: userId, status: 'published' },
