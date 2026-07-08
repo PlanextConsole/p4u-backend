@@ -42,6 +42,10 @@ const CUSTOMER_PROFILE_COLUMNS: ColumnSpec[] = [
 
 export async function repairAuthSchema(): Promise<void> {
   if (!AppDataSource.isInitialized) return;
+  if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres') {
+    console.log('[auth-service] schema repair skipped on postgres');
+    return;
+  }
   const queryRunner = AppDataSource.createQueryRunner();
   try {
     await queryRunner.connect();
