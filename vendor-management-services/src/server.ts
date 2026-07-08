@@ -51,10 +51,15 @@ process.on('SIGINT', shutdown);
 
 async function startServer() {
   try {
-    await repairVendorCatalogModerationSchema();
-    await repairVendorBookingAvailabilitySchema();
-    await repairVendorMediaSchema();
-    await repairVendorDropshippingSchema();
+    const isPostgres = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
+    if (!isPostgres) {
+      await repairVendorCatalogModerationSchema();
+      await repairVendorBookingAvailabilitySchema();
+      await repairVendorMediaSchema();
+      await repairVendorDropshippingSchema();
+    } else {
+      console.log('[vendor-service] MySQL schema repair skipped on postgres');
+    }
     await AppDataSource.initialize();
     console.log('Vendor portal DB connected');
 

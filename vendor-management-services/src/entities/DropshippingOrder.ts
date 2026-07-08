@@ -44,13 +44,13 @@ export class DropshippingOrder {
   @Column({ type: 'varchar', length: 128, nullable: true })
   carrier!: string | null;
 
-  @Column({ name: 'forwarded_at', type: 'datetime', nullable: true })
+  @Column({ name: 'forwarded_at', type: 'timestamp', nullable: true })
   forwardedAt!: Date | null;
 
   @Column({ name: 'expected_delivery_date', type: 'date', nullable: true })
   expectedDeliveryDate!: string | null;
 
-  @Column({ name: 'delivered_at', type: 'datetime', nullable: true })
+  @Column({ name: 'delivered_at', type: 'timestamp', nullable: true })
   deliveredAt!: Date | null;
 
   @Column({ type: 'text', nullable: true })

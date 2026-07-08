@@ -52,7 +52,7 @@ export class VendorRegistrationRequest {
   @Column({ name: 'admin_notes', type: 'text', nullable: true })
   adminNotes!: string | null;
 
-  @Column({ name: 'reviewed_at', type: 'datetime', nullable: true })
+  @Column({ name: 'reviewed_at', type: 'timestamp', nullable: true })
   reviewedAt!: Date | null;
 
   @Column({ name: 'reviewed_by', type: 'varchar', length: 128, nullable: true })

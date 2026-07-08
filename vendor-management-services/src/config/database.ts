@@ -21,10 +21,13 @@ import { PlatformSettings } from '../entities/PlatformSettings';
 import { UserNotification } from '../entities/UserNotification';
 import { Booking } from '../entities/Booking';
 
+const dbType = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres' ? 'postgres' : 'mysql';
+const defaultPort = dbType === 'postgres' ? '5432' : '3306';
+
 export const AppDataSource = new DataSource({
-  type: 'mysql',
+  type: dbType,
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '3306', 10),
+  port: parseInt(process.env.DB_PORT || defaultPort, 10),
   username: process.env.DB_USERNAME || 'root',
   password: process.env.DB_PASSWORD || 'root@123',
   database: process.env.DB_NAME || 'p4u_admin_db',
@@ -51,7 +54,6 @@ export const AppDataSource = new DataSource({
     UserNotification,
     Booking,
   ],
-  // Disable implicit DDL by default to avoid cross-service schema drift.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',
   logging: process.env.NODE_ENV === 'development',
 });
