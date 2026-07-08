@@ -54,9 +54,14 @@ process.on('SIGINT', shutdown);
 
 async function startServer() {
   try {
+    const isPostgres = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
     await AppDataSource.initialize();
-    await ensureSocioSchema();
-    await repairAndMigrateSocioMedia();
+    if (!isPostgres) {
+      await ensureSocioSchema();
+      await repairAndMigrateSocioMedia();
+    } else {
+      console.log('[socio-service] MySQL schema repair skipped on postgres');
+    }
     app.listen(PORT, async () => {
       try {
         await discovery.register({

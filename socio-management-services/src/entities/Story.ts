@@ -24,7 +24,7 @@ export class Story {
   @Column({ name: 'view_count', type: 'int', default: 0 })
   viewCount!: number;
 
-  @Column({ name: 'expires_at', type: 'datetime' })
+  @Column({ name: 'expires_at', type: 'timestamp' })
   expiresAt!: Date;
 
   @Column({ type: 'varchar', length: 32, default: 'active' })

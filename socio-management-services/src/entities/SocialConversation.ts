@@ -17,7 +17,7 @@ export class SocialConversation {
   @Column({ name: 'last_message_text', type: 'text', nullable: true })
   lastMessageText!: string | null;
 
-  @Column({ name: 'last_message_at', type: 'datetime', precision: 6, nullable: true })
+  @Column({ name: 'last_message_at', type: 'timestamp', precision: 6, nullable: true })
   lastMessageAt!: Date | null;
 
   @Column({ name: 'is_request', type: 'boolean', default: false })
