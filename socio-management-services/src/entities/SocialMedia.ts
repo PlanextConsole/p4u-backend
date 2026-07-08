@@ -26,8 +26,8 @@ export class SocialMedia {
   @Column({ name: 'storage_path', type: 'varchar', length: 512, nullable: true })
   storagePath!: string | null;
 
-  /** Legacy LONGBLOB — migrated to disk on startup; new rows leave this null. */
-  @Column({ type: 'longblob', nullable: true })
+  /** Legacy blob — migrated to disk on startup; new rows leave this null. */
+  @Column({ type: 'bytea', nullable: true })
   data!: Buffer | null;
 
   @Column({ name: 'owner_id', type: 'varchar', length: 128 })
