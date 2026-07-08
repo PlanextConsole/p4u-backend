@@ -1,11 +1,6 @@
 #!/usr/bin/env node
 /**
  * Phase 6 — copy auth tables MySQL → Postgres staging.
- *
- * Usage (from repo root on server):
- *   export MYSQL_PASSWORD='...'
- *   export P4U_PG_PASSWORD='...'
- *   node scripts/migration/postgres/step6-auth-migrate-data.mjs
  */
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -40,49 +35,51 @@ const TABLES = [
   'catalog_vendors',
 ];
 
-const BOOL_COLS = new Set([
-  'is_active',
-  'trending',
-  'self_delivery',
-]);
+const BOOL_COLS = new Set(['is_active', 'trending', 'self_delivery']);
 
-function isJsonColumn(name, dataType) {
-  if (dataType === 'json') return true;
-  return /_json$/.test(name) || name === 'metadata' || name === 'payload' || name === 'media_json';
+function isJsonColumnName(name) {
+  return /_json$/i.test(name) || ['metadata', 'payload', 'media_json'].includes(name);
 }
 
-/** MySQL sometimes stores invalid JSON (e.g. `{"Furniture"}`); Postgres jsonb is strict. */
-function toJsonValue(val) {
+/** Normalize any MySQL JSON value to a Postgres-safe JSON string (never raw invalid text). */
+function toPgJsonString(val) {
   if (val === null || val === undefined) return null;
   if (Buffer.isBuffer(val)) val = val.toString('utf8');
+
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed) return null;
     try {
-      return JSON.parse(trimmed);
+      return JSON.stringify(JSON.parse(trimmed));
     } catch {
-      return { _legacy_mysql: trimmed };
+      return JSON.stringify({ _legacy_mysql: trimmed });
     }
   }
+
   if (typeof val === 'object') {
-    // Re-serialize via JSON round-trip so pg never receives invalid JSON text.
     try {
-      return JSON.parse(JSON.stringify(val));
+      return JSON.stringify(val);
     } catch {
-      return { _legacy_mysql: String(val) };
+      return JSON.stringify({ _legacy_mysql: String(val) });
     }
   }
-  return { _legacy_mysql: String(val) };
+
+  return JSON.stringify({ _legacy_mysql: String(val) });
 }
 
-function normalizeValue(col, val, jsonCols) {
+function normalizeScalar(col, val) {
   if (val === null || val === undefined) return null;
-  if (jsonCols.has(col)) return toJsonValue(val);
   if (BOOL_COLS.has(col)) return Boolean(Number(val));
   if (Buffer.isBuffer(val)) return val.toString('utf8');
   if (val instanceof Date) return val;
-  if (typeof val === 'object') return val;
+  if (typeof val === 'object') return JSON.stringify(val);
   return val;
+}
+
+function cellValue(col, val) {
+  if (val === null || val === undefined) return null;
+  if (isJsonColumnName(col)) return toPgJsonString(val);
+  return normalizeScalar(col, val);
 }
 
 async function main() {
@@ -91,21 +88,18 @@ async function main() {
     process.exit(1);
   }
 
-  const mysqlConn = await mysql.createConnection(MYSQL);
+  const mysqlConn = await mysql.createConnection({ ...MYSQL, jsonStrings: true });
   const pgPool = new Pool(PG);
 
   try {
     for (const table of TABLES) {
       const [cols] = await mysqlConn.query(
-        `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
          ORDER BY ORDINAL_POSITION`,
         [MYSQL.database, table],
       );
       const mysqlColumns = cols.map((r) => r.COLUMN_NAME);
-      const jsonCols = new Set(
-        cols.filter((r) => isJsonColumn(r.COLUMN_NAME, r.DATA_TYPE)).map((r) => r.COLUMN_NAME),
-      );
 
       const pgCols = await pgPool.query(
         `SELECT column_name FROM information_schema.columns
@@ -133,12 +127,24 @@ async function main() {
       }
 
       const colList = columns.map((c) => `"${c}"`).join(', ');
-      const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+      const placeholders = columns
+        .map((c, i) => (isJsonColumnName(c) ? `$${i + 1}::jsonb` : `$${i + 1}`))
+        .join(', ');
       const sql = `INSERT INTO ${table} (${colList}) VALUES (${placeholders})`;
 
       for (const row of rows) {
-        const values = columns.map((c) => normalizeValue(c, row[c], jsonCols));
-        await pgPool.query(sql, values);
+        try {
+          const values = columns.map((c) => cellValue(c, row[c]));
+          await pgPool.query(sql, values);
+        } catch (err) {
+          console.error(`${table} row ${row.id ?? '?'} failed`);
+          for (const c of columns) {
+            if (isJsonColumnName(c)) {
+              console.error(`  ${c} raw=${JSON.stringify(row[c])} pg=${toPgJsonString(row[c])}`);
+            }
+          }
+          throw err;
+        }
       }
       console.log(`${table}: ${rows.length} rows copied`);
     }
