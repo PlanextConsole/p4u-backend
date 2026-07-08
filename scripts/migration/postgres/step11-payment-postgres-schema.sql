@@ -17,3 +17,5 @@ CREATE TABLE IF NOT EXISTS user_payment_intents (
 CREATE INDEX IF NOT EXISTS idx_user_payment_intents_order ON user_payment_intents (order_id);
 CREATE INDEX IF NOT EXISTS idx_user_payment_intents_customer ON user_payment_intents (customer_id);
 CREATE INDEX IF NOT EXISTS idx_user_payment_intents_status ON user_payment_intents (status);
+
+GRANT ALL PRIVILEGES ON TABLE user_payment_intents TO p4u_app;
