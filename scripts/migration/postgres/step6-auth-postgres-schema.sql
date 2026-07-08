@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS catalog_vendors (
   coverage_radius_km        numeric(8,2),
   restriction               varchar(32),
   self_delivery             boolean NOT NULL DEFAULT false,
-  max_redemption_percent    numeric(5,2)
+  max_redemption_percent    numeric(5,2),
+  booking_availability_json jsonb
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_vendors_email ON catalog_vendors (email);
 CREATE INDEX IF NOT EXISTS idx_catalog_vendors_phone ON catalog_vendors (phone);

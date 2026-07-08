@@ -46,8 +46,26 @@ const BOOL_COLS = new Set([
   'self_delivery',
 ]);
 
-function normalizeValue(col, val) {
+/** MySQL sometimes stores invalid JSON (e.g. `{"Furniture"}`); Postgres jsonb is strict. */
+function toJsonValue(val) {
   if (val === null || val === undefined) return null;
+  if (Buffer.isBuffer(val)) val = val.toString('utf8');
+  if (typeof val === 'object') return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return { _legacy_mysql: trimmed };
+    }
+  }
+  return val;
+}
+
+function normalizeValue(col, val, jsonCols) {
+  if (val === null || val === undefined) return null;
+  if (jsonCols.has(col)) return toJsonValue(val);
   if (BOOL_COLS.has(col)) return Boolean(Number(val));
   if (Buffer.isBuffer(val)) return val.toString('utf8');
   if (val instanceof Date) return val;
@@ -67,12 +85,28 @@ async function main() {
   try {
     for (const table of TABLES) {
       const [cols] = await mysqlConn.query(
-        `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+        `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
          ORDER BY ORDINAL_POSITION`,
         [MYSQL.database, table],
       );
-      const columns = cols.map((r) => r.COLUMN_NAME);
+      const mysqlColumns = cols.map((r) => r.COLUMN_NAME);
+      const jsonCols = new Set(
+        cols.filter((r) => r.DATA_TYPE === 'json').map((r) => r.COLUMN_NAME),
+      );
+
+      const pgCols = await pgPool.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = $1
+         ORDER BY ordinal_position`,
+        [table],
+      );
+      const pgColumnSet = new Set(pgCols.rows.map((r) => r.column_name));
+      const columns = mysqlColumns.filter((c) => pgColumnSet.has(c));
+      const skipped = mysqlColumns.filter((c) => !pgColumnSet.has(c));
+      if (skipped.length) {
+        console.warn(`${table}: skipping mysql-only columns: ${skipped.join(', ')}`);
+      }
       if (!columns.length) {
         console.warn(`Skip ${table}: no columns`);
         continue;
@@ -91,7 +125,7 @@ async function main() {
       const sql = `INSERT INTO ${table} (${colList}) VALUES (${placeholders})`;
 
       for (const row of rows) {
-        const values = columns.map((c) => normalizeValue(c, row[c]));
+        const values = columns.map((c) => normalizeValue(c, row[c], jsonCols));
         await pgPool.query(sql, values);
       }
       console.log(`${table}: ${rows.length} rows copied`);
