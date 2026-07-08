@@ -37,6 +37,7 @@ export class HomesService {
 
 
   private async ensureSchema(): Promise<void> {
+    if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres') return;
     await AppDataSource.query(`CREATE TABLE IF NOT EXISTS homes_amenities (
       id varchar(36) NOT NULL PRIMARY KEY,
       name varchar(120) NOT NULL,

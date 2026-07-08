@@ -18,10 +18,10 @@ export class PopupBanner {
   @Index()
   isActive!: boolean;
 
-  @Column({ name: 'valid_from', type: 'datetime', nullable: true })
+  @Column({ name: 'valid_from', type: 'timestamp', nullable: true })
   validFrom!: Date | null;
 
-  @Column({ name: 'valid_to', type: 'datetime', nullable: true })
+  @Column({ name: 'valid_to', type: 'timestamp', nullable: true })
   validTo!: Date | null;
 
   @Column({ type: 'json', nullable: true })

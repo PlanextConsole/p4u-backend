@@ -22,7 +22,7 @@ export class ObjectionableFeedLog {
   @Column({ name: 'reviewed_by', type: 'varchar', length: 128, nullable: true })
   reviewedBy!: string | null;
 
-  @Column({ name: 'reviewed_at', type: 'datetime', nullable: true })
+  @Column({ name: 'reviewed_at', type: 'timestamp', nullable: true })
   reviewedAt!: Date | null;
 
   @Column({ type: 'json', nullable: true })

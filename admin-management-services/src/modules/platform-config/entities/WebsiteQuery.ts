@@ -24,7 +24,7 @@ export class WebsiteQuery {
   @Column({ name: 'resolved_by', type: 'varchar', length: 128, nullable: true })
   resolvedBy!: string | null;
 
-  @Column({ name: 'resolved_at', type: 'datetime', nullable: true })
+  @Column({ name: 'resolved_at', type: 'timestamp', nullable: true })
   resolvedAt!: Date | null;
 
   @Column({ type: 'json', nullable: true })

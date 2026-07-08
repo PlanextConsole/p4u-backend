@@ -44,27 +44,31 @@ app.use('/uploads', express.static(adminUploadRoot()));
 
 async function startServer() {
   try {
-    // 1. Create the database (if missing) and ALL shared tables from the canonical schema dump.
-    //    This is the single source of truth for fresh-DB bootstrap across every microservice.
-    await bootstrapAllSharedTables();
+    const isPostgres = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
+    if (!isPostgres) {
+      // 1. Create the database (if missing) and ALL shared tables from the canonical schema dump.
+      await bootstrapAllSharedTables();
 
-    // 2. Column-level repairs for tables that already exist but lack newer columns.
-    await repairCustomerProfilesSchema();
-    await repairCatalogVendorsSchema();
-    await repairVendorPlansSchema();
-    await repairPushNotificationSendsSchema();
-    await repairMediaLibrarySchema();
-    await repairBulkUploadJobsSchema();
-    await repairProductAttributesSchema();
-    await repairPricingEngineSchema();
-    await repairVendorCatalogModerationSchema();
-    await repairVendorBookingAvailabilitySchema();
-    await repairProductVariationsSchema();
+      // 2. Column-level repairs for tables that already exist but lack newer columns.
+      await repairCustomerProfilesSchema();
+      await repairCatalogVendorsSchema();
+      await repairVendorPlansSchema();
+      await repairPushNotificationSendsSchema();
+      await repairMediaLibrarySchema();
+      await repairBulkUploadJobsSchema();
+      await repairProductAttributesSchema();
+      await repairPricingEngineSchema();
+      await repairVendorCatalogModerationSchema();
+      await repairVendorBookingAvailabilitySchema();
+      await repairProductVariationsSchema();
 
-    // 3. Seed defaults — only inserts when target rows/tables are empty.
-    await repairOccupationAdminCreatePlatformVariableSeed();
-    await seedPlatformVariableDefaults();
-    await seedDefaultVendorPlans();
+      // 3. Seed defaults — only inserts when target rows/tables are empty.
+      await repairOccupationAdminCreatePlatformVariableSeed();
+      await seedPlatformVariableDefaults();
+      await seedDefaultVendorPlans();
+    } else {
+      console.log('[admin-service] MySQL bootstrap/repair skipped on postgres');
+    }
 
     await AppDataSource.initialize();
     console.log('Admin DB connected');

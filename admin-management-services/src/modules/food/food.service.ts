@@ -23,6 +23,10 @@ export class FoodService {
   }
 
   async ensureSchema(): Promise<void> {
+    if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres') {
+      this.schemaReady = true;
+      return;
+    }
     if (this.schemaReady) return;
     await AppDataSource.query(`CREATE TABLE IF NOT EXISTS food_restaurants (id varchar(36) NOT NULL PRIMARY KEY,title varchar(160) NOT NULL,tagline varchar(180) NULL,description text NULL,cuisines json NULL,address varchar(255) NOT NULL,latitude decimal(10,7) NULL,longitude decimal(10,7) NULL,phone varchar(30) NULL,vendor_id varchar(80) NULL,cover_image_url varchar(500) NULL,banner_url varchar(500) NULL,logo_url varchar(500) NULL,gallery_urls json NULL,fssai_license varchar(120) NULL,opening_time varchar(20) NULL,closing_time varchar(20) NULL,avg_prep_min int NOT NULL DEFAULT 20,delivery_radius_km decimal(8,2) NOT NULL DEFAULT 8,packaging_fee decimal(10,2) NOT NULL DEFAULT 15,min_order decimal(10,2) NOT NULL DEFAULT 99,commission_percent decimal(5,2) NOT NULL DEFAULT 20,is_pure_veg tinyint(1) NOT NULL DEFAULT 0,is_active tinyint(1) NOT NULL DEFAULT 1,created_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),INDEX IDX_food_restaurants_active (is_active)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await AppDataSource.query(`CREATE TABLE IF NOT EXISTS food_riders (id varchar(36) NOT NULL PRIMARY KEY,name varchar(140) NOT NULL,mobile varchar(30) NULL,email varchar(160) NULL,vehicle_type varchar(40) NOT NULL DEFAULT 'Bike',vehicle_no varchar(40) NULL,kyc_status varchar(30) NOT NULL DEFAULT 'pending',is_active tinyint(1) NOT NULL DEFAULT 1,pending_balance decimal(12,2) NOT NULL DEFAULT 0,documents json NULL,created_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),INDEX IDX_food_riders_kyc (kyc_status),INDEX IDX_food_riders_active (is_active)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);

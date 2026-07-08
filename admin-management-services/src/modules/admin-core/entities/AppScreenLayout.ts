@@ -35,10 +35,10 @@ export class AppScreenLayout {
   @Column({ name: 'priority', type: 'int', default: 0 })
   priority!: number;
 
-  @Column({ name: 'valid_from', type: 'datetime', nullable: true })
+  @Column({ name: 'valid_from', type: 'timestamp', nullable: true })
   validFrom!: Date | null;
 
-  @Column({ name: 'valid_to', type: 'datetime', nullable: true })
+  @Column({ name: 'valid_to', type: 'timestamp', nullable: true })
   validTo!: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })

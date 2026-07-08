@@ -39,7 +39,7 @@ export class HomesPropertyListing {
   @Column({ name: 'is_auto_flagged', type: 'boolean', default: false })
   isAutoFlagged!: boolean;
 
-  @Column({ name: 'submitted_at', type: 'datetime', nullable: true })
+  @Column({ name: 'submitted_at', type: 'timestamp', nullable: true })
   submittedAt!: Date | null;
 
   @Column({ name: 'details', type: 'json', nullable: true })

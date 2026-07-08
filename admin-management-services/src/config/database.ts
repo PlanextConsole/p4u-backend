@@ -65,9 +65,12 @@ import { FoodCoupon } from '../modules/food/entities/FoodCoupon';
 import { FoodRiderSettlement } from '../modules/food/entities/FoodRiderSettlement';
 
 export const AppDataSource = new DataSource({
-  type: 'mysql',
+  type: (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres' ? 'postgres' : 'mysql',
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '3306', 10),
+  port: parseInt(
+    process.env.DB_PORT || ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres' ? '5432' : '3306'),
+    10,
+  ),
   username: process.env.DB_USERNAME || 'root',
   password: process.env.DB_PASSWORD || 'root@123',
   database: process.env.DB_NAME || 'p4u_admin_db',
