@@ -21,7 +21,12 @@ import { PlatformSettings } from '../entities/PlatformSettings';
 import { UserNotification } from '../entities/UserNotification';
 import { Booking } from '../entities/Booking';
 
-const dbType = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres' ? 'postgres' : 'mysql';
+export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
+  const dbType = value.toLowerCase();
+  return dbType === 'postgres' || dbType === 'postgresql';
+}
+
+const dbType = isPostgresDbType() ? 'postgres' : 'mysql';
 const defaultPort = dbType === 'postgres' ? '5432' : '3306';
 
 export const AppDataSource = new DataSource({

@@ -1,4 +1,5 @@
 import { createConnection, RowDataPacket } from 'mysql2/promise';
+import { AppDataSource, isPostgresDbType } from './database';
 
 /**
  * Legacy `customer_profiles` used `mobile`; TypeORM `Customer.phone` maps to column `phone`.
@@ -557,11 +558,11 @@ export async function repairOccupationAdminCreatePlatformVariableSeed(): Promise
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
+/* -----------------------------------------------------------------------------
  * Pricing engine: idempotent column upgrades + seed defaults.
  * Used so an existing UAT/prod DB without the pricing-engine columns gets them
  * on the next admin restart, and a fresh DB ends up with sensible config rows.
- * ───────────────────────────────────────────────────────────────────────────── */
+ * ----------------------------------------------------------------------------- */
 
 const PRICING_ENGINE_COLUMN_DDLS: { table: string; column: string; ddl: string }[] = [
   { table: 'catalog_vendors', column: 'vendor_plan_id', ddl: '`vendor_plan_id` VARCHAR(36) NULL' },
@@ -739,14 +740,36 @@ export async function repairProductVariationsSchema(): Promise<void> {
 
 /** Adds `catalog_vendors.booking_availability_json` for service-vendor scheduling. */
 export async function repairVendorBookingAvailabilitySchema(): Promise<void> {
+  const table = 'catalog_vendors';
+  const column = 'booking_availability_json';
+  const isPostgres = isPostgresDbType();
+
+  if (isPostgres) {
+    if (!AppDataSource.isInitialized) return;
+    const queryRunner = AppDataSource.createQueryRunner();
+    try {
+      await queryRunner.connect();
+      await queryRunner.query(
+        `ALTER TABLE catalog_vendors ADD COLUMN IF NOT EXISTS booking_availability_json jsonb NULL`,
+      );
+      console.log(`[admin-service] Ensured catalog_vendors.booking_availability_json (postgres)`);
+    } catch (err) {
+      console.warn(
+        '[admin-service] vendor booking availability column repair skipped:',
+        err instanceof Error ? err.message : err,
+      );
+    } finally {
+      await queryRunner.release();
+    }
+    return;
+  }
+
   const host = process.env.DB_HOST || 'localhost';
   const port = parseInt(process.env.DB_PORT || '3306', 10);
   const user = process.env.DB_USERNAME || 'root';
   const password = process.env.DB_PASSWORD || 'root@123';
   const database = process.env.DB_NAME || 'p4u_admin_db';
 
-  const table = 'catalog_vendors';
-  const column = 'booking_availability_json';
   const ddl = '`booking_availability_json` JSON NULL';
 
   let connection: Awaited<ReturnType<typeof createConnection>> | undefined;

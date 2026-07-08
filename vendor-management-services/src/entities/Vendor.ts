@@ -130,7 +130,7 @@ export class Vendor {
   @Index()
   vendorType!: VendorType;
 
-  @Column({ name: 'booking_availability_json', type: 'json', nullable: true })
+  @Column({ name: 'booking_availability_json', type: 'json', nullable: true, select: false })
   bookingAvailabilityJson!: Record<string, unknown> | null;
 
   @CreateDateColumn({ name: 'created_at' })

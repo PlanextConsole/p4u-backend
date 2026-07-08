@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 import { createVendorRoutes } from './routes/vendor.routes';
 import { registerErrorHandlers } from './middleware/errorHandlers';
 import { DiscoveryRegistration } from './service/discoveryRegistration';
-import { AppDataSource } from './config/database';
+import { AppDataSource, isPostgresDbType } from './config/database';
 import { ensureVendorUploadDir, vendorUploadRoot } from './config/vendorImageUpload';
 import { repairVendorCatalogModerationSchema } from './config/repairVendorCatalogModeration';
 import { repairVendorBookingAvailabilitySchema } from './config/repairVendorBookingAvailability';
@@ -51,7 +51,7 @@ process.on('SIGINT', shutdown);
 
 async function startServer() {
   try {
-    const isPostgres = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
+    const isPostgres = isPostgresDbType();
     if (!isPostgres) {
       await repairVendorCatalogModerationSchema();
       await repairVendorBookingAvailabilitySchema();

@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
-import { AppDataSource } from './config/database';
+import { AppDataSource, isPostgresDbType } from './config/database';
 import { adminUploadRoot, ensureAdminUploadDir } from './config/uploadPaths';
 import { bootstrapAllSharedTables } from './config/bootstrapSchema';
 import {
@@ -44,7 +44,7 @@ app.use('/uploads', express.static(adminUploadRoot()));
 
 async function startServer() {
   try {
-    const isPostgres = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
+    const isPostgres = isPostgresDbType();
     if (!isPostgres) {
       // 1. Create the database (if missing) and ALL shared tables from the canonical schema dump.
       await bootstrapAllSharedTables();
