@@ -46,11 +46,15 @@ const BOOL_COLS = new Set([
   'self_delivery',
 ]);
 
+function isJsonColumn(name, dataType) {
+  if (dataType === 'json') return true;
+  return /_json$/.test(name) || name === 'metadata' || name === 'payload' || name === 'media_json';
+}
+
 /** MySQL sometimes stores invalid JSON (e.g. `{"Furniture"}`); Postgres jsonb is strict. */
 function toJsonValue(val) {
   if (val === null || val === undefined) return null;
   if (Buffer.isBuffer(val)) val = val.toString('utf8');
-  if (typeof val === 'object') return val;
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed) return null;
@@ -60,7 +64,15 @@ function toJsonValue(val) {
       return { _legacy_mysql: trimmed };
     }
   }
-  return val;
+  if (typeof val === 'object') {
+    // Re-serialize via JSON round-trip so pg never receives invalid JSON text.
+    try {
+      return JSON.parse(JSON.stringify(val));
+    } catch {
+      return { _legacy_mysql: String(val) };
+    }
+  }
+  return { _legacy_mysql: String(val) };
 }
 
 function normalizeValue(col, val, jsonCols) {
@@ -92,7 +104,7 @@ async function main() {
       );
       const mysqlColumns = cols.map((r) => r.COLUMN_NAME);
       const jsonCols = new Set(
-        cols.filter((r) => r.DATA_TYPE === 'json').map((r) => r.COLUMN_NAME),
+        cols.filter((r) => isJsonColumn(r.COLUMN_NAME, r.DATA_TYPE)).map((r) => r.COLUMN_NAME),
       );
 
       const pgCols = await pgPool.query(
