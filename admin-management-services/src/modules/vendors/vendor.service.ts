@@ -29,7 +29,7 @@ export interface VendorPendingApplication {
   email: string | null;
   phone: string | null;
   vendorKind: VendorKind;
-  vendorType: 'PRODUCT' | 'SERVICE';
+  vendorType: 'PRODUCT' | 'SERVICE' | 'BOTH';
   categoryLabel: string | null;
   businessType: string | null;
   gst: string | null;
