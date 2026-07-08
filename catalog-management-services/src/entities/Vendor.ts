@@ -1,6 +1,6 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
@@ -10,7 +10,7 @@ import {
 /** Mirrors admin `catalog_vendors` (shared DB) so public catalog API returns image URLs. */
 @Entity('catalog_vendors')
 export class Vendor {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
 
   @Column({ name: 'business_name', type: 'varchar', length: 255 })

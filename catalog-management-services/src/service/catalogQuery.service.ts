@@ -62,6 +62,19 @@ function normVendor<T extends {
 
 type Paging = { limit: number; offset: number };
 
+function isPostgresDb(): boolean {
+  const dbType = (process.env.DB_TYPE || process.env.DATABASE_TYPE || 'mysql').toLowerCase();
+  return dbType === 'postgres' || dbType === 'postgresql';
+}
+
+/** Postgres: catalog_vendors.id may be uuid while catalog_products.vendor_id is varchar — cast both sides. */
+function activeVendorProductJoin(productAlias: string): string {
+  if (isPostgresDb()) {
+    return `CAST(v.id AS TEXT) = CAST(${productAlias}.vendor_id AS TEXT) AND v.status = :vstatus`;
+  }
+  return `v.id = ${productAlias}.vendorId AND v.status = :vstatus`;
+}
+
 export type CategoryBrowseFilter = {
   categoryId?: string;
   subcategoryId?: string;
@@ -84,7 +97,7 @@ export class CatalogQueryService {
   /** Filters applied to customer-facing product listings (shop, search, vendor pages). */
   private applyPublicProductFilters(qb: SelectQueryBuilder<Product>, includeInactive: boolean) {
     if (includeInactive) return;
-    qb.innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' });
+    qb.innerJoin(Vendor, 'v', activeVendorProductJoin('p'), { vstatus: 'active' });
     qb.andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' });
     qb.andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true });
   }
@@ -231,7 +244,7 @@ export class CatalogQueryService {
     } else {
       row = await repo
         .createQueryBuilder('p')
-        .innerJoin(Vendor, 'v', 'v.id = p.vendorId AND v.status = :vstatus', { vstatus: 'active' })
+        .innerJoin(Vendor, 'v', activeVendorProductJoin('p'), { vstatus: 'active' })
         .where('p.id = :id', { id })
         .andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' })
         .andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true })
