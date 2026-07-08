@@ -37,10 +37,10 @@ export class Coupon {
   @Column({ name: 'per_user_limit', type: 'int', default: 1 })
   perUserLimit!: number;
 
-  @Column({ name: 'valid_from', type: 'datetime', nullable: true })
+  @Column({ name: 'valid_from', type: 'timestamp', nullable: true })
   validFrom!: Date | null;
 
-  @Column({ name: 'valid_until', type: 'datetime', nullable: true })
+  @Column({ name: 'valid_until', type: 'timestamp', nullable: true })
   validUntil!: Date | null;
 
   @Column({ name: 'applicable_vendor_ids', type: 'json', nullable: true })
