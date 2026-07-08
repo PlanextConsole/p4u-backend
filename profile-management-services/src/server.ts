@@ -43,7 +43,12 @@ process.on('SIGINT', shutdown);
 
 async function startServer() {
   try {
-    await ensureCustomerProfilesHasStatusBeforeSync();
+    const isPostgres = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
+    if (!isPostgres) {
+      await ensureCustomerProfilesHasStatusBeforeSync();
+    } else {
+      console.log('[profile-service] MySQL schema repair skipped on postgres');
+    }
     await AppDataSource.initialize();
     console.log('Profile DB connected');
 
