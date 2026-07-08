@@ -7,8 +7,15 @@
  *   export P4U_PG_PASSWORD='...'
  *   node scripts/migration/postgres/step6-auth-migrate-data.mjs
  */
-import mysql from 'mysql2/promise';
-import pg from 'pg';
+import { createRequire } from 'module';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const authRoot = join(here, '../../../auth-management-services');
+const require = createRequire(import.meta.url);
+const mysql = require(join(authRoot, 'node_modules/mysql2/promise'));
+const { Pool } = require(join(authRoot, 'node_modules/pg'));
 
 const MYSQL = {
   host: process.env.DB_HOST || 'localhost',
@@ -55,7 +62,7 @@ async function main() {
   }
 
   const mysqlConn = await mysql.createConnection(MYSQL);
-  const pgPool = new pg.Pool(PG);
+  const pgPool = new Pool(PG);
 
   try {
     for (const table of TABLES) {
@@ -90,7 +97,9 @@ async function main() {
       console.log(`${table}: ${rows.length} rows copied`);
     }
 
-    await pgPool.query(`SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE((SELECT MAX(id) FROM users), 1))`);
+    await pgPool.query(
+      `SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE((SELECT MAX(id) FROM users), 1))`,
+    );
     console.log('users id sequence reset');
     console.log('Done.');
   } finally {
