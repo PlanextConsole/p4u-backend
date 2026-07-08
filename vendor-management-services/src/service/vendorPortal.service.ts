@@ -16,6 +16,7 @@ import { CreateVendorOrganizationOrderDto } from '../dto/create-organization-ord
 import { UpdateVendorOrganizationOrderDto } from '../dto/update-organization-order.dto';
 import { enrichOrderForVendorPortal, enrichOrdersForVendorPortal } from './vendorOrderEnrichment';
 import { VendorNotificationEmitter } from './vendorNotificationEmitter';
+import { jsonText } from '../util/jsonPathSql';
 
 function metaRecord(m: unknown): Record<string, unknown> {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
@@ -187,7 +188,7 @@ export class VendorPortalService {
       .createQueryBuilder('r')
       .where('r.vendorId = :vid', { vid: vendorId })
       .andWhere(
-        "(JSON_UNQUOTE(JSON_EXTRACT(r.metadata, '$.orderId')) = :oid OR JSON_UNQUOTE(JSON_EXTRACT(r.metadata, '$.order_id')) = :oid)",
+        `(${jsonText('r.metadata', 'orderId')} = :oid OR ${jsonText('r.metadata', 'order_id')} = :oid)`,
         { oid: orderId }
       )
       .orderBy('r.createdAt', 'DESC')
@@ -351,7 +352,7 @@ export class VendorPortalService {
     if (q) {
       const like = `%${q}%`;
       qb.andWhere(
-        '(s.id LIKE :like OR s.orderId LIKE :like OR JSON_UNQUOTE(JSON_EXTRACT(s.metadata, "$.orderRef")) LIKE :like OR JSON_UNQUOTE(JSON_EXTRACT(s.metadata, "$.settlementCode")) LIKE :like)',
+        `(s.id LIKE :like OR s.orderId LIKE :like OR ${jsonText('s.metadata', 'orderRef')} LIKE :like OR ${jsonText('s.metadata', 'settlementCode')} LIKE :like)`,
         { like },
       );
     }

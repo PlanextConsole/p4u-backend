@@ -1,6 +1,6 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
@@ -14,7 +14,7 @@ export type VendorType = 'PRODUCT' | 'SERVICE';
 
 @Entity('catalog_vendors')
 export class Vendor {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
 
   @Column({ name: 'business_name', type: 'varchar', length: 255 })

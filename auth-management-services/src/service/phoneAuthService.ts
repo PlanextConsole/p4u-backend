@@ -68,6 +68,19 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
     'catalog.read.public',
     'content.read.public',
     'content.newsletter.subscribe',
+    'vendor.portal.me.read',
+    'vendor.portal.me.write',
+    'vendor.portal.order.read',
+    'vendor.portal.order.write',
+    'vendor.portal.org_order.read',
+    'vendor.portal.org_order.write',
+    'vendor.portal.settlement.read',
+    'vendor.portal.review.read',
+    'vendor.portal.referral.read',
+    'vendor.portal.service.read',
+    'vendor.portal.service.write',
+    'vendor.portal.booking.read',
+    'vendor.portal.booking.write',
   ],
   CUSTOMER: [
     'customer.read.self',
@@ -1026,15 +1039,16 @@ export class PhoneAuthService {
   }
 
   private resolvePermissions(claims: AccessTokenClaims, roles: string[]): string[] {
-    if (Array.isArray(claims.permissions) && claims.permissions.length > 0) {
-      return claims.permissions.map((p) => String(p));
-    }
-    const scopePermissions = String(claims.scope || '')
-      .split(' ')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (scopePermissions.length > 0) return scopePermissions;
     const derived = new Set<string>();
+    if (Array.isArray(claims.permissions)) {
+      for (const p of claims.permissions) derived.add(String(p));
+    }
+    for (const s of String(claims.scope || '')
+      .split(' ')
+      .map((x) => x.trim())
+      .filter(Boolean)) {
+      derived.add(s);
+    }
     for (const role of roles) {
       for (const p of ROLE_PERMISSION_MAP[role] || []) derived.add(p);
     }

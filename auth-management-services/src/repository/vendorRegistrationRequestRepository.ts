@@ -1,6 +1,7 @@
 import { Repository } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { VendorRegistrationRequest } from '../entity/VendorRegistrationRequest';
+import { jsonText } from '../util/jsonPathSql';
 
 export class VendorRegistrationRequestRepository {
   private repository: Repository<VendorRegistrationRequest>;
@@ -13,7 +14,7 @@ export class VendorRegistrationRequestRepository {
     return this.repository
       .createQueryBuilder('r')
       .where("r.status = 'pending'")
-      .andWhere("JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.email')) = :email", { email })
+      .andWhere(`${jsonText('r.payload', 'email')} = :email`, { email })
       .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
@@ -24,10 +25,7 @@ export class VendorRegistrationRequestRepository {
   ): Promise<VendorRegistrationRequest | null> {
     return this.repository
       .createQueryBuilder('r')
-      .where(
-        "JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.keycloakUserId')) = :kid",
-        { kid: keycloakUserId },
-      )
+      .where(`${jsonText('r.payload', 'keycloakUserId')} = :kid`, { kid: keycloakUserId })
       .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
@@ -42,10 +40,7 @@ export class VendorRegistrationRequestRepository {
     if (last10.length < 10) return null;
     return this.repository
       .createQueryBuilder('r')
-      .where(
-        "JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.phone')) LIKE :p",
-        { p: `%${last10}` },
-      )
+      .where(`${jsonText('r.payload', 'phone')} LIKE :p`, { p: `%${last10}` })
       .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
@@ -54,9 +49,7 @@ export class VendorRegistrationRequestRepository {
   async findLatestByFirebaseUid(firebaseUid: string): Promise<VendorRegistrationRequest | null> {
     return this.repository
       .createQueryBuilder('r')
-      .where("JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.firebaseUid')) = :uid", {
-        uid: firebaseUid,
-      })
+      .where(`${jsonText('r.payload', 'firebaseUid')} = :uid`, { uid: firebaseUid })
       .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
@@ -68,10 +61,7 @@ export class VendorRegistrationRequestRepository {
     return this.repository
       .createQueryBuilder('r')
       .where("r.status = 'pending'")
-      .andWhere(
-        "JSON_UNQUOTE(JSON_EXTRACT(r.payload, '$.keycloakUserId')) = :kid",
-        { kid: keycloakUserId },
-      )
+      .andWhere(`${jsonText('r.payload', 'keycloakUserId')} = :kid`, { kid: keycloakUserId })
       .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
