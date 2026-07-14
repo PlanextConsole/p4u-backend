@@ -1,4 +1,4 @@
-import express, { Express, Request, Response } from 'express';
+﻿import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
 import { createVendorRoutes } from './routes/vendor.routes';
@@ -52,13 +52,13 @@ process.on('SIGINT', shutdown);
 async function startServer() {
   try {
     const isPostgres = isPostgresDbType();
+    await repairVendorCatalogModerationSchema();
     if (!isPostgres) {
-      await repairVendorCatalogModerationSchema();
       await repairVendorBookingAvailabilitySchema();
       await repairVendorMediaSchema();
       await repairVendorDropshippingSchema();
     } else {
-      console.log('[vendor-service] MySQL schema repair skipped on postgres');
+      console.log('[vendor-service] MySQL-only schema repairs skipped on postgres');
     }
     await AppDataSource.initialize();
     console.log('Vendor portal DB connected');
@@ -84,3 +84,4 @@ async function startServer() {
 }
 
 startServer();
+
