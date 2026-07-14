@@ -165,9 +165,11 @@ CREATE TABLE IF NOT EXISTS catalog_vendor_services (
   metadata jsonb,
   price numeric(12,2) NOT NULL DEFAULT 0,
   is_available boolean NOT NULL DEFAULT true,
+  moderation_status varchar(32) DEFAULT 'approved',
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_vendor_services_vendor_service ON catalog_vendor_services (vendor_id, service_id);
 CREATE INDEX IF NOT EXISTS idx_catalog_vendor_services_vendor ON catalog_vendor_services (vendor_id);
 CREATE INDEX IF NOT EXISTS idx_catalog_vendor_services_service ON catalog_vendor_services (service_id);
+ALTER TABLE catalog_vendor_services ADD COLUMN IF NOT EXISTS moderation_status varchar(32) DEFAULT 'approved';

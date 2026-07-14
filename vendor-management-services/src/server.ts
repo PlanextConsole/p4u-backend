@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 import { createVendorRoutes } from './routes/vendor.routes';
 import { registerErrorHandlers } from './middleware/errorHandlers';
 import { DiscoveryRegistration } from './service/discoveryRegistration';
-import { AppDataSource, isPostgresDbType } from './config/database';
+import { AppDataSource } from './config/database';
 import { ensureVendorUploadDir, vendorUploadRoot } from './config/vendorImageUpload';
 import { repairVendorCatalogModerationSchema } from './config/repairVendorCatalogModeration';
 import { repairVendorBookingAvailabilitySchema } from './config/repairVendorBookingAvailability';
@@ -51,17 +51,13 @@ process.on('SIGINT', shutdown);
 
 async function startServer() {
   try {
-    const isPostgres = isPostgresDbType();
     await repairVendorCatalogModerationSchema();
-    if (!isPostgres) {
-      await repairVendorBookingAvailabilitySchema();
-      await repairVendorMediaSchema();
-      await repairVendorDropshippingSchema();
-    } else {
-      console.log('[vendor-service] MySQL-only schema repairs skipped on postgres');
-    }
+    await repairVendorMediaSchema();
+    await repairVendorDropshippingSchema();
     await AppDataSource.initialize();
     console.log('Vendor portal DB connected');
+    // Needs initialized DataSource for Postgres ADD COLUMN IF NOT EXISTS.
+    await repairVendorBookingAvailabilitySchema();
 
     app.listen(PORT, async () => {
       console.log(`Vendor Portal Service http://localhost:${PORT}`);

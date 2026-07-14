@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS commerce_cart_items (
   id varchar(36) PRIMARY KEY,
   product_id varchar(64) NOT NULL,
   vendor_id varchar(36),
+  variation_id varchar(36),
   quantity int NOT NULL DEFAULT 1,
   unit_price numeric(12,2) NOT NULL DEFAULT 0,
   metadata jsonb,

@@ -1,7 +1,13 @@
 import { createConnection, RowDataPacket } from 'mysql2/promise';
+import { isPostgresDbType } from './database';
 
 /** Dropshipping tables + platform flag (vendor portal). */
 export async function repairVendorDropshippingSchema(): Promise<void> {
+  if (isPostgresDbType()) {
+    // Tables are created by postgres step8; skip MySQL DDL on PG.
+    console.log('[vendor-service] Dropshipping schema assumed present on postgres (step8)');
+    return;
+  }
   const host = process.env.DB_HOST || 'localhost';
   const port = parseInt(process.env.DB_PORT || '3306', 10);
   const user = process.env.DB_USERNAME || 'root';

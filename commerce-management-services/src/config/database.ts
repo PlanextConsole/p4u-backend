@@ -16,7 +16,12 @@ import { ProductCategory } from '../entities/ProductCategory';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 
-const dbType = (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres' ? 'postgres' : 'mysql';
+export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
+  const dbType = value.toLowerCase();
+  return dbType === 'postgres' || dbType === 'postgresql';
+}
+
+const dbType = isPostgresDbType() ? 'postgres' : 'mysql';
 const defaultPort = dbType === 'postgres' ? '5432' : '3306';
 
 export const AppDataSource = new DataSource({

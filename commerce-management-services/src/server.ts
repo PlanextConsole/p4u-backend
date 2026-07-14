@@ -5,6 +5,7 @@ import { createCommerceRoutes } from './routes/commerce.routes';
 import { registerErrorHandlers } from './middleware/errorHandlers';
 import { DiscoveryRegistration } from './service/discoveryRegistration';
 import { AppDataSource } from './config/database';
+import { repairCartVariationSchema } from './config/repairCartVariationSchema';
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ async function startServer() {
   try {
     await AppDataSource.initialize();
     console.log('Commerce DB connected');
+    await repairCartVariationSchema();
 
     app.listen(PORT, async () => {
       console.log(`Commerce Service http://localhost:${PORT}`);

@@ -1,8 +1,13 @@
-import { AppDataSource } from '../config/database';
+import { AppDataSource, isPostgresDbType } from '../config/database';
 import { Product } from '../entities/Product';
 import { ProductVariation } from '../entities/ProductVariation';
 import { countUnitsSoldByProduct } from './vendorOrderEnrichment';
 import { ProductVariationsService, type VariationUpsertInput } from './productVariations.service';
+
+/** MySQL stores booleans as 0/1; Postgres uses boolean — avoid `= 1` on PG. */
+function activeWhereClause(column = 'is_active'): string {
+  return isPostgresDbType() ? `${column} IS TRUE` : `${column} = 1`;
+}
 
 function serializeVariation(v: ProductVariation) {
   return {
@@ -50,11 +55,12 @@ export class VendorCatalogService {
   private variations = new ProductVariationsService();
 
   async getCategoriesForProducts(): Promise<MergedCategoryRow[]> {
+    const active = activeWhereClause();
     const roots: { id: string; name: string }[] = await AppDataSource.query(
-      `SELECT id, name FROM product_categories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC`,
+      `SELECT id, name FROM product_categories WHERE ${active} ORDER BY sort_order ASC, name ASC`,
     );
     const subs: { id: string; name: string; product_category_id: string }[] = await AppDataSource.query(
-      `SELECT id, name, product_category_id FROM product_subcategories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC`,
+      `SELECT id, name, product_category_id FROM product_subcategories WHERE ${active} ORDER BY sort_order ASC, name ASC`,
     );
     return [
       ...roots.map((c) => ({ id: c.id, name: c.name, parentId: null as string | null })),
@@ -70,7 +76,7 @@ export class VendorCatalogService {
     { id: string; code: string; title: string; percentage: string; isActive: boolean }[]
   > {
     return AppDataSource.query(
-      `SELECT id, code, title, percentage, is_active AS isActive FROM catalog_tax_configurations WHERE is_active = 1 ORDER BY title ASC`,
+      `SELECT id, code, title, percentage, is_active AS isActive FROM catalog_tax_configurations WHERE ${activeWhereClause()} ORDER BY title ASC`,
     );
   }
 
@@ -84,7 +90,7 @@ export class VendorCatalogService {
       is_active: number;
       select_values: string | null;
     }[] = await AppDataSource.query(
-      `SELECT id, name, type, is_active, select_values FROM product_attribute_definitions WHERE is_active = 1 ORDER BY name ASC`,
+      `SELECT id, name, type, is_active, select_values FROM product_attribute_definitions WHERE ${activeWhereClause()} ORDER BY name ASC`,
     );
     return rows.map((r) => ({
       id: r.id,
