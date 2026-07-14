@@ -1,10 +1,24 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { randomUUID } from 'crypto';
+import {
+  Entity,
+  PrimaryColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  Index,
+  BeforeInsert,
+} from 'typeorm';
 
 /** Wallet ledger shared with profile/socio services (`customer_reward_points_ledger`). */
 @Entity('customer_reward_points_ledger')
 export class RewardPointsLedger {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'customer_id', type: 'varchar', length: 36 })
   @Index()

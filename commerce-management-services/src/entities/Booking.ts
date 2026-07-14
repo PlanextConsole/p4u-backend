@@ -1,16 +1,23 @@
+import { randomUUID } from 'crypto';
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  BeforeInsert,
 } from 'typeorm';
 
 @Entity('commerce_bookings')
 export class Booking {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'customer_id', type: 'varchar', length: 36 })
   @Index()

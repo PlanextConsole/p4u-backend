@@ -297,6 +297,7 @@ export class CartService {
     try {
       const orderRepo = queryRunner.manager.getRepository(Order);
       const order = orderRepo.create({
+        id: randomUUID(),
         customerId,
         vendorId: resolvedVendor,
         orderRef: `ORD-${Date.now()}`,
@@ -318,6 +319,7 @@ export class CartService {
       for (const v of breakdown.vendors) {
         await settlementRepo.save(
           settlementRepo.create({
+            id: randomUUID(),
             vendorId: v.vendorId,
             orderId: order.id,
             settlementType: 'cash',
@@ -338,6 +340,7 @@ export class CartService {
         const ledgerRepo = queryRunner.manager.getRepository(RewardPointsLedger);
         await ledgerRepo.save(
           ledgerRepo.create({
+            id: randomUUID(),
             customerId: profile.id,
             points: -breakdown.pointsRedeemed,
             balanceAfter: breakdown.walletBalanceBefore - breakdown.pointsRedeemed,

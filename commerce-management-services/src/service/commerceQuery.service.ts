@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { Order } from '../entities/Order';
 
@@ -23,6 +24,7 @@ export class CommerceQueryService {
   }) {
     const repo = AppDataSource.getRepository(Order);
     const row = repo.create({
+      id: randomUUID(),
       customerId: input.customerId,
       vendorId: input.vendorId ?? null,
       orderRef: `ORD-${Date.now()}`,

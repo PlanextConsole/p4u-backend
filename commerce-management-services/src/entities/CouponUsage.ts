@@ -1,16 +1,23 @@
+import { randomUUID } from 'crypto';
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  BeforeInsert,
 } from 'typeorm';
 
 @Entity('commerce_coupon_usages')
 export class CouponUsage {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'coupon_id', type: 'varchar', length: 36 })
   @Index()

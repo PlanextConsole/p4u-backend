@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { Review } from '../entities/Review';
 
@@ -20,7 +21,7 @@ export class ReviewService {
       if (data.metadata !== undefined) existing.metadata = data.metadata;
       return this.repo.save(existing);
     }
-    const row = this.repo.create({ ...data, customerId });
+    const row = this.repo.create({ ...data, id: randomUUID(), customerId });
     return this.repo.save(row);
   }
 

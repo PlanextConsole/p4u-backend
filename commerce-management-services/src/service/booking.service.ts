@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Booking } from '../entities/Booking';
@@ -97,6 +98,7 @@ export class BookingService {
     }
 
     const row = this.repo.create({
+      id: randomUUID(),
       ...data,
       customerId,
       status: 'pending',
