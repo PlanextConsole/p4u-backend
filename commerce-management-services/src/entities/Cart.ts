@@ -1,18 +1,25 @@
+import { randomUUID } from 'crypto';
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
   Index,
   OneToMany,
+  BeforeInsert,
 } from 'typeorm';
 import { CartItem } from './CartItem';
 
 @Entity('commerce_carts')
 export class Cart {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'customer_id', type: 'varchar', length: 36 })
   @Index({ unique: true })

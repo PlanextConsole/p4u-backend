@@ -1,18 +1,27 @@
+import { randomUUID } from 'crypto';
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  BeforeInsert,
 } from 'typeorm';
 import { Cart } from './Cart';
 
 @Entity('commerce_cart_items')
 export class CartItem {
-  @PrimaryGeneratedColumn('uuid')
+  // Postgres tables use varchar(36) with no DEFAULT — do not rely on
+  // @PrimaryGeneratedColumn('uuid') (it can insert null id).
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @ManyToOne(() => Cart, (cart) => cart.items, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'cart_id' })

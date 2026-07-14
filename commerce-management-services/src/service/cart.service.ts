@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { Cart } from '../entities/Cart';
 import { CartItem } from '../entities/CartItem';
@@ -75,7 +76,7 @@ export class CartService {
   async getOrCreateCart(customerId: string): Promise<Cart> {
     let cart = await this.cartRepo().findOne({ where: { customerId } });
     if (!cart) {
-      cart = this.cartRepo().create({ customerId });
+      cart = this.cartRepo().create({ id: randomUUID(), customerId });
       cart = await this.cartRepo().save(cart);
     }
     return cart;
@@ -115,7 +116,7 @@ export class CartService {
     try {
       let cart = await queryRunner.manager.findOne(Cart, { where: { customerId } });
       if (!cart) {
-        cart = queryRunner.manager.create(Cart, { customerId });
+        cart = queryRunner.manager.create(Cart, { id: randomUUID(), customerId });
         cart = await queryRunner.manager.save(cart);
       } else {
         await queryRunner.manager
@@ -127,6 +128,7 @@ export class CartService {
       }
       for (const line of lines) {
         const item = queryRunner.manager.create(CartItem, {
+          id: randomUUID(),
           cart,
           productId: String(line.productId).slice(0, 64),
           vendorId: normalizeVendorId(line.vendorId),
@@ -167,6 +169,7 @@ export class CartService {
       await this.itemRepo().save(match);
     } else {
       const item = this.itemRepo().create({
+        id: randomUUID(),
         cart,
         productId: pid,
         vendorId: vid,
