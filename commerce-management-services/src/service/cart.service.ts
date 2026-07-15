@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Cart } from '../entities/Cart';
 import { CartItem } from '../entities/CartItem';
@@ -6,6 +7,7 @@ import { CustomerProfile } from '../entities/CustomerProfile';
 import { Settlement } from '../entities/Settlement';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { Order } from '../entities/Order';
+import { Product } from '../entities/Product';
 import { CommerceQueryService } from './commerceQuery.service';
 import { PricingService, type CartPricingBreakdown } from './pricing.service';
 
@@ -261,13 +263,34 @@ export class CartService {
       throw new Error(`Cart subtotal ${breakdown.itemSubtotal} below minimum ${breakdown.minCartValue}`);
     }
 
+    // Snapshot the product name onto each line so order history is self-describing
+    // (clients still hydrate images/price from the catalog, but the name is captured
+    // at purchase time and survives a later product edit/delete). Additive only —
+    // does not affect pricing/totals.
+    const lineProductIds = [
+      ...new Set(data.items.map((i) => i.productId).filter(Boolean) as string[]),
+    ];
+    const productNameById = new Map<string, string>();
+    if (lineProductIds.length) {
+      const prods = await AppDataSource.getRepository(Product).find({
+        where: { id: In(lineProductIds) },
+      });
+      for (const p of prods) productNameById.set(p.id, p.name);
+    }
+
     const lines = data.items.map((i) => ({
       productId: i.productId,
       vendorId: i.vendorId,
       quantity: i.quantity,
       unitPrice: i.unitPrice,
       lineTotal: i.lineTotal,
-      metadata: i.metadata,
+      metadata: {
+        ...(i.metadata ?? {}),
+        productName:
+          (i.metadata as Record<string, unknown> | null | undefined)?.productName ??
+          productNameById.get(i.productId) ??
+          undefined,
+      },
     }));
     const vendorIds = new Set(lines.map((l) => l.vendorId ?? ''));
     let resolvedVendor = normalizeVendorId(vendorId);
@@ -309,6 +332,9 @@ export class CartService {
           lines,
           multiVendor: vendorIds.size > 1,
           totals: breakdown,
+          // Business name(s) the pricing step already resolved — lets clients show
+          // the seller without a second lookup.
+          vendorName: breakdown.vendors.find((v) => v.vendorName)?.vendorName ?? undefined,
           ...customerSnapshot,
         },
       });
