@@ -63,6 +63,11 @@ import { FoodRider } from '../modules/food/entities/FoodRider';
 import { FoodOrder } from '../modules/food/entities/FoodOrder';
 import { FoodCoupon } from '../modules/food/entities/FoodCoupon';
 import { FoodRiderSettlement } from '../modules/food/entities/FoodRiderSettlement';
+import { FranchisePlan } from '../modules/franchise/entities/FranchisePlan';
+import { FranchiseRegistration } from '../modules/franchise/entities/FranchiseRegistration';
+import { Franchise } from '../modules/franchise/entities/Franchise';
+import { FranchiseRegistrationPayment } from '../modules/franchise/entities/FranchiseRegistrationPayment';
+import { FranchiseBusinessProjection } from '../modules/franchise/entities/FranchiseBusinessProjection';
 
 export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
   const dbType = value.toLowerCase();
@@ -143,6 +148,11 @@ export const AppDataSource = new DataSource({
     FoodOrder,
     FoodCoupon,
     FoodRiderSettlement,
+    FranchisePlan,
+    FranchiseRegistration,
+    Franchise,
+    FranchiseRegistrationPayment,
+    FranchiseBusinessProjection,
   ],
   // Prevent accidental DDL races across services; enable only when explicitly requested.
   synchronize: process.env.DB_SYNCHRONIZE === 'true',

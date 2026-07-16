@@ -25,6 +25,7 @@ import { createMediaLibraryAdminRoutes } from '../media-library/media-library.ro
 import { createFileUploadsAdminRoutes } from '../file-uploads/file-uploads.routes';
 import { createHomesAdminRoutes } from '../homes/homes.routes';
 import { createFoodAdminRoutes } from '../food/food.routes';
+import { createFranchiseAdminRoutes } from '../franchise/franchise.routes';
 import { HierarchyService } from './services/hierarchy.service';
 import { LayoutService } from './services/layout.service';
 import { AuditService } from './services/audit.service';
@@ -82,6 +83,7 @@ export const createAdminRoutes = (): Router => {
   router.use(createFileUploadsAdminRoutes());
   router.use(createHomesAdminRoutes());
   router.use(createFoodAdminRoutes());
+  router.use(createFranchiseAdminRoutes());
 
   const secured = Router();
   secured.use(jwtAuth);
