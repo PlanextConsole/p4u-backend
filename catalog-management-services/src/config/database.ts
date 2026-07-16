@@ -21,6 +21,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD || 'root@123',
   database: process.env.DB_NAME || 'p4u_admin_db',
   entities: [ProductCategory, ProductSubcategory, ServiceCategory, ServiceSubcategory, CatalogServiceItem, Vendor, VendorPlan, Product, ProductVariation, VendorService],
-  synchronize: process.env.NODE_ENV !== 'production',
+  // Shared schemas are migration-owned. Never mutate them merely because NODE_ENV is missing.
+  synchronize: process.env.DB_SYNCHRONIZE === 'true',
   logging: process.env.NODE_ENV === 'development',
 });
