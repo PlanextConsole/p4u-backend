@@ -15,6 +15,7 @@ import { Product } from '../entities/Product';
 import { ProductCategory } from '../entities/ProductCategory';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
+import { CustomerReferral } from '../entities/CustomerReferral';
 
 export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
   const dbType = value.toLowerCase();
@@ -48,6 +49,7 @@ export const AppDataSource = new DataSource({
     ProductCategory,
     RewardPointsLedger,
     CatalogServiceItem,
+    CustomerReferral,
   ],
   synchronize: false,
   logging: process.env.NODE_ENV === 'development',

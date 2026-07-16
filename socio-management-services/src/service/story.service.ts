@@ -136,7 +136,9 @@ export class StoryService {
       story.metadata = { ...meta, likedBy: [...likedBy, userKeycloakSub], likeCount: likeCount + 1 };
       await storyRepo.save(story);
 
-      await this.rewardPoints.creditStoryLikeInTransaction(manager, userKeycloakSub, storyId);
+      if (story.authorId && story.authorId !== userKeycloakSub) {
+        await this.rewardPoints.creditStoryLikeInTransaction(manager, story.authorId, storyId, userKeycloakSub);
+      }
       return { storyId, alreadyLiked: false, likeCount: likeCount + 1 };
     });
   }

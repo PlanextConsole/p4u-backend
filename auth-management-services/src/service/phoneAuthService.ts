@@ -6,6 +6,7 @@ import { verifyPhoneIdToken } from '../config/firebaseAdmin';
 import { ensureKeycloakAdminAuth } from '../config/keycloakAdmin';
 import { CustomerProfileRepository } from '../repository/customerProfileRepository';
 import { CustomerProfile } from '../entity/CustomerProfile';
+import { CustomerRewardService } from './customerReward.service';
 import { CatalogVendorRepository } from '../repository/catalogVendorRepository';
 import { CatalogVendor } from '../entity/CatalogVendor';
 import { VendorRegistrationRequestRepository } from '../repository/vendorRegistrationRequestRepository';
@@ -184,6 +185,7 @@ function parseOptionalCoord(v: unknown): string | null {
 export class PhoneAuthService {
   private keycloakAdmin: KcAdminClient;
   private customerProfileRepo: CustomerProfileRepository;
+  private customerRewards = new CustomerRewardService();
   private catalogVendorRepo: CatalogVendorRepository;
   private vendorRequestRepo: VendorRegistrationRequestRepository;
   private userRepo: UserRepository;
@@ -732,7 +734,10 @@ export class PhoneAuthService {
       firebaseUid: decoded.firebaseUid,
       ...(customOcc ? { occupation: customOcc } : {}),
     };
-    await this.customerProfileRepo.save(profile);
+    const savedProfile = await this.customerProfileRepo.save(profile);
+    await this.customerRewards.creditWelcomeBonus(savedProfile.id).catch((error) => {
+      console.error('[auth] registration welcome bonus failed:', error);
+    });
   }
 
   /**

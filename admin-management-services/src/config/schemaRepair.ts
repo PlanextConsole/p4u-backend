@@ -574,6 +574,7 @@ const PRICING_ENGINE_COLUMN_DDLS: { table: string; column: string; ddl: string }
   { table: 'product_categories', column: 'commission_override_percent', ddl: '`commission_override_percent` DECIMAL(5,2) NULL' },
   { table: 'catalog_categories', column: 'commission_override_percent', ddl: '`commission_override_percent` DECIMAL(5,2) NULL' },
   { table: 'catalog_products', column: 'commission_override_percent', ddl: '`commission_override_percent` DECIMAL(5,2) NULL' },
+  { table: 'customer_reward_points_ledger', column: 'expires_at', ddl: '`expires_at` DATETIME NULL' },
 ];
 
 export async function repairPricingEngineSchema(): Promise<void> {
@@ -610,6 +611,11 @@ export async function repairPricingEngineSchema(): Promise<void> {
         );
       }
     }
+    await connection.query(
+      `UPDATE customer_reward_points_ledger
+       SET expires_at = DATE_ADD(created_at, INTERVAL 60 DAY)
+       WHERE points > 0 AND expires_at IS NULL`,
+    );
   } catch (err) {
     console.warn(
       '[admin-service] pricing-engine schema repair skipped:',
@@ -802,11 +808,11 @@ export async function repairVendorBookingAvailabilitySchema(): Promise<void> {
 
 const PLATFORM_VARIABLE_SEEDS: { key: string; valueAmount: number; category: string; description: string }[] = [
   { key: 'WELCOME_BONUS', valueAmount: 300, category: 'Loyalty', description: 'Points credited to a new customer on signup' },
-  { key: 'REFERRAL_BONUS', valueAmount: 100, category: 'Loyalty', description: 'Points credited to a customer who joins via a referral code' },
-  { key: 'VENDOR_REFERRAL_BONUS', valueAmount: 200, category: 'Loyalty', description: 'Points credited to the customer whose referral code was used' },
+  { key: 'REFERRAL_BONUS', valueAmount: 100, category: 'Loyalty', description: 'Points credited to a customer after their referred friend places a first order' },
+  { key: 'VENDOR_REFERRAL_BONUS', valueAmount: 200, category: 'Loyalty', description: 'Points credited to a vendor after their referred vendor is approved' },
   { key: 'POST_SHARE_POINTS', valueAmount: 1, category: 'Loyalty', description: 'Points credited when a user shares a post' },
-  { key: 'POST_LIKE_POINTS', valueAmount: 1, category: 'Loyalty', description: 'Points credited when a user likes a post' },
-  { key: 'STORY_LIKE_POINTS', valueAmount: 1, category: 'Loyalty', description: 'Points credited when a user likes a story' },
+  { key: 'POST_LIKE_POINTS', valueAmount: 1, category: 'Loyalty', description: 'Points credited to a post owner when another user likes the post' },
+  { key: 'STORY_LIKE_POINTS', valueAmount: 1, category: 'Loyalty', description: 'Points credited to a story owner when another user likes the story' },
   { key: 'PLATFORM_FEE', valueAmount: 10, category: 'Checkout', description: 'Flat platform fee added to every order' },
   { key: 'GST_ON_PLATFORM_FEE_PERCENT', valueAmount: 18, category: 'Checkout', description: 'GST percentage applied on the platform fee' },
   { key: 'MIN_CART_VALUE', valueAmount: 0, category: 'Checkout', description: 'Minimum cart value required to checkout' },

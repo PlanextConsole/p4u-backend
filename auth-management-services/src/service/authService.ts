@@ -12,6 +12,7 @@ import { UserRepository } from '../repository/userRepository';
 import { User } from '../entity/User';
 import { CustomerProfileRepository } from '../repository/customerProfileRepository';
 import { CustomerProfile } from '../entity/CustomerProfile';
+import { CustomerRewardService } from './customerReward.service';
 import { VendorRegistrationRequestRepository } from '../repository/vendorRegistrationRequestRepository';
 import { VendorRegistrationRequest } from '../entity/VendorRegistrationRequest';
 
@@ -53,6 +54,7 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
 };
 
 export class AuthService {
+  private customerRewards = new CustomerRewardService();
   private keycloakAdmin: KcAdminClient;
   private userRepository: UserRepository;
   private customerProfileRepository: CustomerProfileRepository;
@@ -221,7 +223,10 @@ export class AuthService {
     profile.keycloakUserId = keycloakUserId;
     const ref = request.referralCode?.trim();
     profile.metadata = ref ? { appliedReferralCode: ref } : null;
-    await this.customerProfileRepository.save(profile);
+    const savedProfile = await this.customerProfileRepository.save(profile);
+    await this.customerRewards.creditWelcomeBonus(savedProfile.id).catch((error) => {
+      console.error('[auth] registration welcome bonus failed:', error);
+    });
   }
 
   async login(request: LoginRequest): Promise<AuthResponse> {
@@ -476,4 +481,3 @@ export class AuthService {
     return [...derived];
   }
 }
-

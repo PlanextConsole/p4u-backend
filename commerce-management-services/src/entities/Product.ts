@@ -26,6 +26,9 @@ export class Product {
   @Column({ name: 'commission_override_percent', type: 'decimal', precision: 5, scale: 2, nullable: true })
   commissionOverridePercent!: string | null;
 
+  @Column({ type: 'json', nullable: true })
+  metadata!: Record<string, unknown> | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

@@ -10,6 +10,7 @@ import {
   PLATFORM_VAR_KEYS,
 } from './platformVariable.reader';
 import { resolveCommissionPercent, resolveMaxRedemptionPercent } from './commissionResolver';
+import { getSpendablePointsBalance } from './rewardBalance';
 
 export type CartLineForPricing = {
   productId: string;
@@ -143,6 +144,7 @@ export class PricingService {
     const pricedLines: PricedLine[] = [];
     const vendorAgg = new Map<string, { subtotal: number; commission: number; vendorName: string | null }>();
     let itemSubtotal = 0;
+    let maxRedeemableValueN = 0;
 
     for (const line of lines) {
       const product = productById.get(line.productId) ?? null;
@@ -178,6 +180,24 @@ export class PricingService {
 
       const commissionAmount = (lineTotalN * commissionPct) / 100;
 
+      const productMetadata = product?.metadata && typeof product.metadata === 'object'
+        ? product.metadata as Record<string, unknown>
+        : {};
+      const redemptionPct = resolveMaxRedemptionPercent({
+        productMaxRedemptionPercent: productMetadata.maxUserRedemptionPercent as string | number | null,
+        vendorMaxRedemptionPercent: vendor?.maxRedemptionPercent,
+        vendorPlanMaxUserRedemptionPercent: plan?.maxUserRedemptionPercent,
+      });
+      const productPointCapValue = productMetadata.maxPointsRedeemable;
+      const productPointCapRaw = productPointCapValue == null || productPointCapValue === ''
+        ? NaN
+        : Number(productPointCapValue);
+      const percentCapValue = (lineTotalN * redemptionPct) / 100;
+      const lineCapValue = Number.isFinite(productPointCapRaw) && productPointCapRaw >= 0
+        ? Math.min(percentCapValue, productPointCapRaw)
+        : percentCapValue;
+      maxRedeemableValueN += Math.max(0, lineCapValue);
+
       pricedLines.push({
         productId: line.productId,
         vendorId: resolvedVendorId,
@@ -205,17 +225,8 @@ export class PricingService {
       netToVendor: fmt(v.subtotal - v.commission),
     }));
 
-    // Resolve max redemption % across all vendors in cart — most-restrictive wins so a user
-    // never burns more points than the smallest cap allows. Single-vendor carts use that vendor's cap.
-    const perVendorMaxPct: number[] = vendorIds.map((vid) => {
-      const v = vendorById.get(vid);
-      const plan = v?.vendorPlanId ? planById.get(v.vendorPlanId) : null;
-      return resolveMaxRedemptionPercent({
-        vendorMaxRedemptionPercent: v?.maxRedemptionPercent,
-        vendorPlanMaxUserRedemptionPercent: plan?.maxUserRedemptionPercent,
-      });
-    });
-    const maxRedeemablePct = perVendorMaxPct.length ? Math.min(...perVendorMaxPct) : 0;
+    // Product caps apply per line; each product falls back to its vendor and then its plan.
+    const maxRedeemablePct = itemSubtotal > 0 ? (maxRedeemableValueN / itemSubtotal) * 100 : 0;
 
     const [
       platformFeeBase,
@@ -232,14 +243,7 @@ export class PricingService {
     ]);
 
     const ledgerRepo = AppDataSource.getRepository(RewardPointsLedger);
-    const balanceRow = await ledgerRepo
-      .createQueryBuilder('l')
-      .select('COALESCE(SUM(l.points), 0)', 'balance')
-      .where('l.customer_id = :cid', { cid: customerId })
-      .getRawOne();
-    const walletBalance = Number(balanceRow?.balance || 0);
-
-    const maxRedeemableValueN = (itemSubtotal * maxRedeemablePct) / 100;
+    const walletBalance = await getSpendablePointsBalance(ledgerRepo, customerId);
     const requestedRedeem = Math.max(0, Math.floor(Number(opts.redeemPoints) || 0));
     let pointsRedeemed = Math.min(requestedRedeem, walletBalance, Math.floor(maxRedeemableValueN));
     if (pointsRedeemed < 0) pointsRedeemed = 0;

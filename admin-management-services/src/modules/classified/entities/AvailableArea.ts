@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, JoinColumn, ManyToOne } from 'typeorm';
+import { AvailableCity } from './AvailableCity';
 
 @Entity('classified_available_areas')
 export class AvailableArea {
@@ -8,6 +9,10 @@ export class AvailableArea {
   @Column({ name: 'city_id', type: 'varchar', length: 36, nullable: true })
   @Index()
   cityId!: string | null;
+
+  @ManyToOne(() => AvailableCity, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'city_id' })
+  city!: AvailableCity | null;
 
   @Column({ type: 'varchar', length: 255 })
   @Index()

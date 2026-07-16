@@ -1,9 +1,7 @@
 import { AppDataSource } from '../config/database';
 import { Customer } from '../entities/Customer';
-import { ReferralService } from './referral.service';
 
 export class ProfileQueryService {
-  private referralSvc = new ReferralService();
   async getCustomerById(customerId: string) {
     return AppDataSource.getRepository(Customer).findOne({ where: { id: customerId } });
   }
@@ -45,7 +43,6 @@ export class ProfileQueryService {
     row.metadata = Object.keys(prev).length ? prev : null;
 
     const saved = await repo.save(row);
-    await this.referralSvc.applyReferralForReferredCustomer(saved.id);
     return saved;
   }
 }

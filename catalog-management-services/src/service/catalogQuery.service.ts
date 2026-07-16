@@ -10,6 +10,7 @@ import { ProductVariation } from '../entities/ProductVariation';
 import { Vendor } from '../entities/Vendor';
 import { VendorService } from '../entities/VendorService';
 import { normalizeDocumentsJson, normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
+import { CustomerLocation, visibleVendorIds } from './vendorCoverage.service';
 
 function normCategory<T extends PublicCategory>(c: T): T {
   return {
@@ -95,9 +96,13 @@ export type PublicCategory = {
 
 export class CatalogQueryService {
   /** Filters applied to customer-facing product listings (shop, search, vendor pages). */
-  private applyPublicProductFilters(qb: SelectQueryBuilder<Product>, includeInactive: boolean) {
+  private applyPublicProductFilters(qb: SelectQueryBuilder<Product>, includeInactive: boolean, allowedVendorIds?: string[] | null) {
     if (includeInactive) return;
     qb.innerJoin(Vendor, 'v', activeVendorProductJoin('p'), { vstatus: 'active' });
+    if (allowedVendorIds) {
+      if (allowedVendorIds.length) qb.andWhere('v.id IN (:...visibleVendorIds)', { visibleVendorIds: allowedVendorIds });
+      else qb.andWhere('1 = 0');
+    }
     qb.andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' });
     qb.andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true });
   }
@@ -194,7 +199,7 @@ export class CatalogQueryService {
     }));
   }
 
-  async listVendors(includeInactive: boolean, paging: Paging, filters?: { vendorKind?: string }) {
+  async listVendors(includeInactive: boolean, paging: Paging, filters?: { vendorKind?: string }, location?: CustomerLocation) {
     const repo = AppDataSource.getRepository(Vendor);
     const qb = repo
       .createQueryBuilder('v')
@@ -204,6 +209,11 @@ export class CatalogQueryService {
       .offset(paging.offset);
 
     if (!includeInactive) qb.andWhere('v.status = :status', { status: 'active' });
+    const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
+    if (allowedVendorIds) {
+      if (allowedVendorIds.length) qb.andWhere('v.id IN (:...visibleVendorIds)', { visibleVendorIds: allowedVendorIds });
+      else qb.andWhere('1 = 0');
+    }
     const kind = filters?.vendorKind?.trim().toLowerCase();
     if (kind === 'product' || kind === 'service') {
       qb.andWhere('v.vendorKind = :vk', { vk: kind });
@@ -212,14 +222,16 @@ export class CatalogQueryService {
     return { items: items.map(normVendor), total };
   }
 
-  async getVendor(id: string, includeInactive: boolean) {
+  async getVendor(id: string, includeInactive: boolean, location?: CustomerLocation) {
+    const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
+    if (allowedVendorIds && !allowedVendorIds.includes(id)) return null;
     const repo = AppDataSource.getRepository(Vendor);
     const where = includeInactive ? { id } : { id, status: 'active' };
     const row = await repo.findOne({ where });
     return row ? normVendor(row) : null;
   }
 
-  async listProducts(vendorId: string | undefined, includeInactive: boolean, paging: Paging) {
+  async listProducts(vendorId: string | undefined, includeInactive: boolean, paging: Paging, location?: CustomerLocation) {
     const repo = AppDataSource.getRepository(Product);
     const qb = repo
       .createQueryBuilder('p')
@@ -228,26 +240,29 @@ export class CatalogQueryService {
       .limit(paging.limit)
       .offset(paging.offset);
 
+    const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
     if (vendorId) qb.andWhere('p.vendorId = :vendorId', { vendorId });
-    this.applyPublicProductFilters(qb, includeInactive);
+    this.applyPublicProductFilters(qb, includeInactive, allowedVendorIds);
 
     const [items, total] = await qb.getManyAndCount();
     return { items: items.map(normProduct), total };
   }
 
-  async getProduct(id: string, includeInactive: boolean) {
+  async getProduct(id: string, includeInactive: boolean, location?: CustomerLocation) {
     const repo = AppDataSource.getRepository(Product);
     const varRepo = AppDataSource.getRepository(ProductVariation);
     let row: Product | null;
     if (includeInactive) {
       row = await repo.findOne({ where: { id } });
     } else {
+      const allowedVendorIds = await visibleVendorIds(location);
       row = await repo
         .createQueryBuilder('p')
         .innerJoin(Vendor, 'v', activeVendorProductJoin('p'), { vstatus: 'active' })
         .where('p.id = :id', { id })
         .andWhere("(p.moderationStatus = :approved OR p.moderationStatus IS NULL)", { approved: 'approved' })
         .andWhere('(p.isActive = :active OR p.availability = :avail)', { active: true, avail: true })
+        .andWhere(allowedVendorIds ? (allowedVendorIds.length ? 'v.id IN (:...visibleVendorIds)' : '1 = 0') : '1 = 1', { visibleVendorIds: allowedVendorIds ?? [] })
         .getOne();
     }
     if (!row) return null;
@@ -260,7 +275,7 @@ export class CatalogQueryService {
     return { ...normProduct(row), variations: variations.map(normVariation) };
   }
 
-  async listProductsForBrowse(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {
+  async listProductsForBrowse(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter, location?: CustomerLocation) {
     const repo = AppDataSource.getRepository(Product);
     const qb = repo
       .createQueryBuilder('p')
@@ -269,7 +284,8 @@ export class CatalogQueryService {
       .limit(paging.limit)
       .offset(paging.offset);
 
-    this.applyPublicProductFilters(qb, includeInactive);
+    const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
+    this.applyPublicProductFilters(qb, includeInactive, allowedVendorIds);
 
     const sub = filters?.subcategoryId?.trim();
     const cat = filters?.categoryId?.trim();
@@ -337,18 +353,20 @@ export class CatalogQueryService {
     };
   }
 
-  async listVendorOffersForService(serviceId: string, includeInactiveVendors: boolean) {
+  async listVendorOffersForService(serviceId: string, includeInactiveVendors: boolean, location?: CustomerLocation) {
     const vsRepo = AppDataSource.getRepository(VendorService);
     const vRepo = AppDataSource.getRepository(Vendor);
     const offers = await vsRepo.find({
       where: { serviceId, isActive: true },
       order: { price: 'ASC' },
     });
+    const allowedVendorIds = includeInactiveVendors ? null : await visibleVendorIds(location);
     if (!offers.length) {
       const vendors = await vRepo.find();
       const target = String(serviceId);
       const matched = vendors.filter((v) => {
         if (!includeInactiveVendors && v.status !== 'active') return false;
+        if (allowedVendorIds && !allowedVendorIds.includes(v.id)) return false;
         if (String(v.vendorKind || '').toLowerCase() === 'product') return false;
         const raw = (v as unknown as { servicesJson?: unknown }).servicesJson;
         if (raw == null) return false;
@@ -397,6 +415,7 @@ export class CatalogQueryService {
       const v = vmap.get(o.vendorId);
       if (!v) continue;
       if (!includeInactiveVendors && v.status !== 'active') continue;
+      if (allowedVendorIds && !allowedVendorIds.includes(v.id)) continue;
       if (String(v.vendorKind || '').toLowerCase() === 'product') continue;
       out.push({
         vendorServiceId: o.id,
@@ -419,9 +438,10 @@ export class CatalogQueryService {
     return repo.findOne({ where });
   }
 
-  async searchAll(q: string, includeInactive: boolean, paging: Paging) {
+  async searchAll(q: string, includeInactive: boolean, paging: Paging, location?: CustomerLocation) {
     const like = `%${q}%`;
     const items: Array<Record<string, unknown>> = [];
+    const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
 
     const pcQb = AppDataSource.getRepository(ProductCategory)
       .createQueryBuilder('c')
@@ -459,6 +479,10 @@ export class CatalogQueryService {
       .orderBy('v.updatedAt', 'DESC')
       .limit(paging.limit);
     if (!includeInactive) vendorsQb.andWhere('v.status = :status', { status: 'active' });
+    if (allowedVendorIds) {
+      if (allowedVendorIds.length) vendorsQb.andWhere('v.id IN (:...visibleVendorIds)', { visibleVendorIds: allowedVendorIds });
+      else vendorsQb.andWhere('1 = 0');
+    }
     const vendors = await vendorsQb.getMany();
     items.push(...vendors.map((v) => ({ type: 'vendor', ...v })));
 
@@ -467,7 +491,7 @@ export class CatalogQueryService {
       .where('p.name LIKE :like OR p.description LIKE :like', { like })
       .orderBy('p.updatedAt', 'DESC')
       .limit(paging.limit);
-    this.applyPublicProductFilters(productsQb, includeInactive);
+    this.applyPublicProductFilters(productsQb, includeInactive, allowedVendorIds);
     const products = await productsQb.getMany();
     items.push(...products.map((p) => ({ type: 'product', ...p })));
 

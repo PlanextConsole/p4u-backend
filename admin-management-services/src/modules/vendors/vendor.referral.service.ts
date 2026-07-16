@@ -31,6 +31,7 @@ export class VendorReferralService {
    * When a new vendor carries `appliedReferralCode`, credit the referring vendor once.
    */
   async applyVendorReferralReward(newVendor: Vendor): Promise<void> {
+    if (newVendor.status !== 'active') return;
     const codeUsed = newVendor.appliedReferralCode?.trim();
     if (!codeUsed) return;
 
@@ -63,6 +64,7 @@ export class VendorReferralService {
           referredBusinessName: newVendor.businessName,
           referralCode: codeUsed,
           description: 'Reward for referring a new vendor',
+          expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
         },
       }),
     );

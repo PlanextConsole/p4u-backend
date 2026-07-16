@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS customer_reward_points_ledger (
   reference_id varchar(64),
   description varchar(255),
   metadata jsonb,
+  expires_at timestamp,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

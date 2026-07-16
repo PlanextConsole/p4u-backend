@@ -34,6 +34,10 @@ export class RewardPointsLedger {
   @Column({ type: 'json', nullable: true })
   metadata!: Record<string, unknown> | null;
 
+  @Column({ name: 'expires_at', type: 'timestamp', nullable: true })
+  @Index()
+  expiresAt!: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

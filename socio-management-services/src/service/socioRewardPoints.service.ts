@@ -4,6 +4,7 @@ import { CustomerProfile } from '../entities/CustomerProfile';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { CommerceSettlement } from '../entities/CommerceSettlement';
 import { getPlatformVarNumber, PLATFORM_VAR_KEYS, type PlatformVarKey } from './platformVariable.reader';
+import { getSpendablePointsBalance, rewardExpiresAt } from './rewardBalance';
 
 type LedgerType = 'post_like' | 'post_share' | 'story_like';
 
@@ -27,12 +28,7 @@ export class SocioRewardPointsService {
 
   private async syncWalletMetadata(manager: EntityManager, customerId: string): Promise<void> {
     const ledgerRepo = manager.getRepository(RewardPointsLedger);
-    const raw = await ledgerRepo
-      .createQueryBuilder('l')
-      .select('COALESCE(SUM(l.points), 0)', 'balance')
-      .where('l.customer_id = :customerId', { customerId })
-      .getRawOne();
-    const balance = Number(raw?.balance || 0);
+    const balance = await getSpendablePointsBalance(ledgerRepo, customerId);
     const customer = await manager.getRepository(CustomerProfile).findOne({ where: { id: customerId } });
     if (!customer) return;
     const meta = { ...(customer.metadata || {}), wallet: balance, walletBalance: balance };
@@ -53,20 +49,16 @@ export class SocioRewardPointsService {
 
     const configured = await getPlatformVarNumber(VAR_BY_TYPE[type]);
     if (!Number.isFinite(configured) || configured <= 0) return;
-    const points = configured * sign;
-    const description = sign < 0 ? `Reversal: ${DESCRIPTION_BY_TYPE[type]}` : DESCRIPTION_BY_TYPE[type];
-
     const ledgerRepo = manager.getRepository(RewardPointsLedger);
-    const raw = await ledgerRepo
-      .createQueryBuilder('l')
-      .select('COALESCE(SUM(l.points), 0)', 'balance')
-      .where('l.customer_id = :customerId', { customerId })
-      .getRawOne();
-    const currentBalance = Number(raw?.balance || 0);
+    const currentBalance = await getSpendablePointsBalance(ledgerRepo, customerId);
+    const points = sign < 0 ? -Math.min(configured, currentBalance) : configured;
+    if (points === 0) return;
+    const description = sign < 0 ? `Reversal: ${DESCRIPTION_BY_TYPE[type]}` : DESCRIPTION_BY_TYPE[type];
 
     const customer = await manager.getRepository(CustomerProfile).findOne({ where: { id: customerId } });
     const name = customer?.fullName ?? 'Customer';
 
+    const expiry = sign > 0 ? rewardExpiresAt() : null;
     await ledgerRepo.save(
       ledgerRepo.create({
         customerId,
@@ -76,6 +68,7 @@ export class SocioRewardPointsService {
         referenceId,
         description,
         metadata: { source: 'socio', ...extraMetadata },
+        expiresAt: expiry,
       }),
     );
 
@@ -89,6 +82,7 @@ export class SocioRewardPointsService {
           customerName: name,
           description,
           reason: type.replace('_', ' '),
+          ...(expiry ? { expiresAt: expiry.toISOString() } : {}),
           ...extraMetadata,
         },
       }),
@@ -122,9 +116,9 @@ export class SocioRewardPointsService {
     return this.creditEvent(manager, keycloakSub, 'post_share', postId, { postId });
   }
 
-  /** Credits story-like points (single credit per like event). */
-  async creditStoryLikeInTransaction(manager: EntityManager, keycloakSub: string, storyId: string): Promise<void> {
-    return this.creditEvent(manager, keycloakSub, 'story_like', storyId, { storyId });
+  /** Credits story-like points to the story owner (single credit per liker). */
+  async creditStoryLikeInTransaction(manager: EntityManager, ownerKeycloakSub: string, storyId: string, likerKeycloakSub: string): Promise<void> {
+    return this.creditEvent(manager, ownerKeycloakSub, 'story_like', storyId, { storyId, likerId: likerKeycloakSub });
   }
 }
 

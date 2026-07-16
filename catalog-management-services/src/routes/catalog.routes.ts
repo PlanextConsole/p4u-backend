@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { CatalogQueryService, type CategoryKind } from '../service/catalogQuery.service';
+import type { CustomerLocation } from '../service/vendorCoverage.service';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { sendSuccess, sendNotFound, sendBadRequest, sendServerError } from '../middleware/responseEnvelope';
 
@@ -30,6 +31,25 @@ export function createCatalogRoutes(): Router {
   };
   const includeInactive = (req: Request) =>
     req.query.includeInactive === 'true' || req.query.purpose === 'all';
+  const parseLocation = (req: Request): CustomerLocation | undefined => {
+    const numberValue = (value: unknown): number | undefined => {
+      if (value == null || value === '') return undefined;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    const stringValue = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const location: CustomerLocation = {
+      latitude: numberValue(req.query.latitude ?? req.query.lat),
+      longitude: numberValue(req.query.longitude ?? req.query.lng),
+      city: stringValue(req.query.city),
+      district: stringValue(req.query.district),
+      state: stringValue(req.query.state),
+      stateCode: stringValue(req.query.stateCode),
+      country: stringValue(req.query.country),
+    };
+    return Object.values(location).some((value) => value !== undefined) ? location : undefined;
+  };
 
   router.get('/public/health', (_req: Request, res: Response) => {
     sendSuccess(res, {
@@ -63,7 +83,7 @@ export function createCatalogRoutes(): Router {
       const paging = parsePaging(req);
       const vendorKind =
         typeof req.query.vendorKind === 'string' ? req.query.vendorKind.trim() : undefined;
-      const data = await svc.listVendors(includeInactive(req), paging, { vendorKind });
+      const data = await svc.listVendors(includeInactive(req), paging, { vendorKind }, parseLocation(req));
       sendSuccess(res, data.items ?? data, 200, { total: data.total, ...paging });
     } catch (e: any) {
       sendServerError(res, e.message);
@@ -72,7 +92,7 @@ export function createCatalogRoutes(): Router {
 
   router.get('/vendors/:vendorId', async (req: Request, res: Response) => {
     try {
-      const item = await svc.getVendor(req.params.vendorId, includeInactive(req));
+      const item = await svc.getVendor(req.params.vendorId, includeInactive(req), parseLocation(req));
       if (!item) return sendNotFound(res, 'Vendor not found');
       sendSuccess(res, item);
     } catch (e: any) {
@@ -83,7 +103,7 @@ export function createCatalogRoutes(): Router {
   router.get('/vendors/:vendorId/products', async (req: Request, res: Response) => {
     try {
       const paging = parsePaging(req);
-      const data = await svc.listProducts(req.params.vendorId, includeInactive(req), paging);
+      const data = await svc.listProducts(req.params.vendorId, includeInactive(req), paging, parseLocation(req));
       sendSuccess(res, data.items ?? data, 200, { total: data.total, ...paging });
     } catch (e: any) {
       sendServerError(res, e.message);
@@ -92,7 +112,7 @@ export function createCatalogRoutes(): Router {
 
   router.get('/products/:productId', async (req: Request, res: Response) => {
     try {
-      const item = await svc.getProduct(req.params.productId, includeInactive(req));
+      const item = await svc.getProduct(req.params.productId, includeInactive(req), parseLocation(req));
       if (!item) return sendNotFound(res, 'Product not found');
       sendSuccess(res, item);
     } catch (e: any) {
@@ -129,7 +149,7 @@ export function createCatalogRoutes(): Router {
       const data = await svc.listProductsForBrowse(includeInactive(req), paging, {
         categoryId,
         subcategoryId,
-      });
+      }, parseLocation(req));
       sendSuccess(res, data.items ?? data, 200, { total: data.total, ...paging });
     } catch (e: any) {
       sendServerError(res, e.message);
@@ -151,7 +171,7 @@ export function createCatalogRoutes(): Router {
       const q = String(req.query.q ?? '').trim();
       if (!q) return sendBadRequest(res, 'q is required');
       const paging = parsePaging(req);
-      const items = await svc.searchAll(q, includeInactive(req), paging);
+      const items = await svc.searchAll(q, includeInactive(req), paging, parseLocation(req));
       sendSuccess(res, items);
     } catch (e: any) {
       sendServerError(res, e.message);
@@ -161,7 +181,7 @@ export function createCatalogRoutes(): Router {
   /** Services tab: vendors offering this catalog service (`catalog_vendor_services`). */
   router.get('/browse/services/:serviceId/vendors', async (req: Request, res: Response) => {
     try {
-      const offers = await svc.listVendorOffersForService(req.params.serviceId, false);
+      const offers = await svc.listVendorOffersForService(req.params.serviceId, false, parseLocation(req));
       sendSuccess(res, offers);
     } catch (e: any) {
       sendServerError(res, e.message);

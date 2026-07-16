@@ -4,6 +4,7 @@ import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { Customer } from '../entities/Customer';
 import { CommerceSettlement } from '../entities/CommerceSettlement';
 import { getPlatformVarNumber, PLATFORM_VAR_KEYS } from './platformVariable.reader';
+import { getSpendablePointsBalance, rewardExpiresAt } from './rewardBalance';
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -27,12 +28,7 @@ export class ReferralService {
   private settlementRepo = AppDataSource.getRepository(CommerceSettlement);
 
   async syncWalletMetadata(customerId: string): Promise<void> {
-    const raw = await this.ledgerRepo
-      .createQueryBuilder('l')
-      .select('COALESCE(SUM(l.points), 0)', 'balance')
-      .where('l.customer_id = :customerId', { customerId })
-      .getRawOne();
-    const balance = Number(raw?.balance || 0);
+    const balance = await getSpendablePointsBalance(this.ledgerRepo, customerId);
     const customer = await this.customerRepo.findOne({ where: { id: customerId } });
     if (!customer) return;
     const meta = { ...(customer.metadata || {}), wallet: balance, walletBalance: balance };
@@ -41,12 +37,15 @@ export class ReferralService {
   }
 
   private async recordPointsSettlement(amount: number, metadata: Record<string, unknown>): Promise<void> {
+    const settlementMetadata = amount > 0
+      ? { ...metadata, expiresAt: rewardExpiresAt().toISOString() }
+      : metadata;
     await this.settlementRepo.save(
       this.settlementRepo.create({
         settlementType: 'points',
         status: 'posted',
         amount: String(amount),
-        metadata,
+        metadata: settlementMetadata,
       }),
     );
   }
@@ -89,7 +88,7 @@ export class ReferralService {
       .where('l.customer_id = :customerId', { customerId: referrer.id })
       .getRawOne();
     const currentBalance = Number(rawBalance?.balance || 0);
-    const pts = await getPlatformVarNumber(PLATFORM_VAR_KEYS.VENDOR_REFERRAL_BONUS);
+    const pts = await getPlatformVarNumber(PLATFORM_VAR_KEYS.REFERRAL_BONUS);
 
     const referralRow = this.referralRepo.create({
       referrerCustomerId: referrer.id,
@@ -110,6 +109,7 @@ export class ReferralService {
         referenceId: referredCustomerId,
         description: 'Reward for referring a new customer',
         metadata: { referralCode: codeUsed.trim(), referredCustomerId },
+        expiresAt: rewardExpiresAt(),
       }),
     );
 
@@ -140,6 +140,7 @@ export class ReferralService {
           referenceId: referrer.id,
           description: 'Reward for joining via referral',
           metadata: { referralCode: codeUsed.trim(), referrerCustomerId: referrer.id },
+          expiresAt: rewardExpiresAt(),
         }),
       );
       await this.recordPointsSettlement(refereePts, {
@@ -183,6 +184,7 @@ export class ReferralService {
       referenceId: null,
       description: 'Welcome bonus credited',
       metadata: { source: 'system', campaign: 'welcome_bonus' },
+      expiresAt: rewardExpiresAt(),
     });
     await this.ledgerRepo.save(row);
 
@@ -220,16 +222,10 @@ export class ReferralService {
   }
 
   async getRewardBalance(customerId: string) {
-    await this.applyReferralForReferredCustomer(customerId);
     await this.ensureWelcomeBonus(customerId);
     await this.syncWalletMetadata(customerId);
 
-    const result = await this.ledgerRepo
-      .createQueryBuilder('l')
-      .select('COALESCE(SUM(l.points), 0)', 'balance')
-      .where('l.customer_id = :customerId', { customerId })
-      .getRawOne();
-    const balance = Number(result?.balance || 0);
+    const balance = await getSpendablePointsBalance(this.ledgerRepo, customerId);
 
     const [history, total] = await this.ledgerRepo.findAndCount({
       where: { customerId },

@@ -18,6 +18,9 @@ export class CustomerProfile {
   @Column({ name: 'keycloak_user_id', type: 'varchar', length: 128, nullable: true })
   keycloakUserId!: string | null;
 
+  @Column({ name: 'referral_code', type: 'varchar', length: 64, nullable: true })
+  referralCode!: string | null;
+
   @Column({ type: 'json', nullable: true })
   metadata!: Record<string, unknown> | null;
 }

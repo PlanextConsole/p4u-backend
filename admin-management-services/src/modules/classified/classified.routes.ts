@@ -7,6 +7,8 @@ import { getAuthSub, clientIp, parseLimitOffset } from '../../http/adminHttp';
 import { ClassifiedAdminService } from './classified.service';
 import { UpsertNameActiveDto } from './dto/upsert-name-active.dto';
 import { UpsertClassifiedProductDto } from './dto/upsert-classified-product.dto';
+import { UpsertAvailableAreaDto } from './dto/upsert-available-area.dto';
+import { UpsertAvailableCityDto } from './dto/upsert-available-city.dto';
 
 export function createClassifiedAdminRoutes(): Router {
   const r = Router();
@@ -37,32 +39,36 @@ export function createClassifiedAdminRoutes(): Router {
   // Cities
   r.get('/availableCities', listHandler((p, l, o) => svc.listCities(p, l, o)));
   r.post('/availableCities', async (req, res) => {
-    const dto = await validateDto<UpsertNameActiveDto>(req, res, UpsertNameActiveDto); if (!dto) return;
+    const dto = await validateDto<UpsertAvailableCityDto>(req, res, UpsertAvailableCityDto); if (!dto) return;
+    if (!dto.name?.trim()) return res.status(400).json({ message: 'City name is required' });
     const row = await svc.createCity(dto, getAuthSub(req), clientIp(req)); res.status(201).json(row);
   });
   r.patch('/availableCities/:id', async (req, res) => {
-    const dto = await validateDto<UpsertNameActiveDto>(req, res, UpsertNameActiveDto); if (!dto) return;
+    const dto = await validateDto<UpsertAvailableCityDto>(req, res, UpsertAvailableCityDto); if (!dto) return;
     try { const row = await svc.updateCity(req.params.id, dto, getAuthSub(req), clientIp(req)); res.json(row); }
     catch (e: any) { res.status(404).json({ message: e.message }); }
   });
   r.patch('/availableCities/individual/:id', async (req, res) => {
-    const dto = await validateDto<UpsertNameActiveDto>(req, res, UpsertNameActiveDto); if (!dto) return;
+    const dto = await validateDto<UpsertAvailableCityDto>(req, res, UpsertAvailableCityDto); if (!dto) return;
     try { const row = await svc.updateCity(req.params.id, dto, getAuthSub(req), clientIp(req)); res.json(row); }
     catch (e: any) { res.status(404).json({ message: e.message }); }
   });
   r.delete('/availableCities/:id', async (req, res) => {
     try { await svc.deleteCity(req.params.id, getAuthSub(req), clientIp(req)); res.status(204).send(); }
-    catch (e: any) { res.status(404).json({ message: e.message }); }
+    catch (e: any) { res.status(e.message?.includes('assigned areas') ? 409 : 404).json({ message: e.message }); }
   });
 
   // Areas
   r.get('/availableAreas', listHandler((p, l, o) => svc.listAreas(p, l, o)));
   r.post('/availableAreas', async (req, res) => {
-    const dto = await validateDto<UpsertNameActiveDto>(req, res, UpsertNameActiveDto); if (!dto) return;
-    const row = await svc.createArea(dto, getAuthSub(req), clientIp(req)); res.status(201).json(row);
+    const dto = await validateDto<UpsertAvailableAreaDto>(req, res, UpsertAvailableAreaDto); if (!dto) return;
+    if (!dto.name?.trim() || !dto.cityId) return res.status(400).json({ message: 'Area name and cityId are required' });
+    try { const row = await svc.createArea(dto, getAuthSub(req), clientIp(req)); res.status(201).json(row); }
+    catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   r.patch('/availableAreas/individual/:id', async (req, res) => {
-    const dto = await validateDto<UpsertNameActiveDto>(req, res, UpsertNameActiveDto); if (!dto) return;
+    const dto = await validateDto<UpsertAvailableAreaDto>(req, res, UpsertAvailableAreaDto); if (!dto) return;
+    if (dto.name !== undefined && !dto.name.trim()) return res.status(400).json({ message: 'Area name cannot be empty' });
     try { const row = await svc.updateArea(req.params.id, dto, getAuthSub(req), clientIp(req)); res.json(row); }
     catch (e: any) { res.status(404).json({ message: e.message }); }
   });

@@ -6,6 +6,7 @@ import { CartItem } from '../entities/CartItem';
 import { CustomerProfile } from '../entities/CustomerProfile';
 import { Settlement } from '../entities/Settlement';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
+import { CustomerReferralRewardService } from './customerReferralReward.service';
 import { Order } from '../entities/Order';
 import { Product } from '../entities/Product';
 import { CommerceQueryService } from './commerceQuery.service';
@@ -47,6 +48,7 @@ function formatPrice(v: string | number): string {
 }
 
 export class CartService {
+  private customerReferralRewards = new CustomerReferralRewardService();
   private commerce = new CommerceQueryService();
   private pricing = new PricingService();
 
@@ -376,6 +378,21 @@ export class CartService {
             metadata: { orderRef: order.orderRef, orderId: order.id, value: breakdown.pointsRedeemedValue },
           }),
         );
+        await queryRunner.manager.getRepository(Settlement).save(
+          queryRunner.manager.getRepository(Settlement).create({
+            vendorId: resolvedVendor,
+            orderId: order.id,
+            settlementType: 'points',
+            status: 'posted',
+            amount: String(-breakdown.pointsRedeemed),
+            metadata: {
+              customerId: profile.id,
+              type: 'order_redeem',
+              orderRef: order.orderRef,
+              description: 'Points redeemed at checkout',
+            },
+          }),
+        );
         // Mirror the running wallet balance into customer metadata.
         const merged = { ...(profile.metadata || {}), wallet: breakdown.walletBalanceBefore - breakdown.pointsRedeemed, walletBalance: breakdown.walletBalanceBefore - breakdown.pointsRedeemed };
         profile.metadata = merged;
@@ -391,6 +408,9 @@ export class CartService {
         .execute();
 
       await queryRunner.commitTransaction();
+      await this.customerReferralRewards.applyAfterFirstPurchase(customerId, order.id).catch((error) => {
+        console.error('[commerce] first-purchase referral reward failed:', error);
+      });
       return order;
     } catch (e) {
       await queryRunner.rollbackTransaction();

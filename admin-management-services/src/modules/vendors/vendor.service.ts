@@ -500,6 +500,9 @@ export class VendorAdminService {
       row.vendorType = vendorTypeFromKind(dto.vendorKind);
     }
     await repo.save(row);
+    if (row.status === 'active') {
+      await this.vendorReferral.applyVendorReferralReward(row);
+    }
     if (dto.servicesJson !== undefined) {
       await this.catalog.syncVendorOfferingsFromServicesJson(row.id, row.servicesJson);
     }

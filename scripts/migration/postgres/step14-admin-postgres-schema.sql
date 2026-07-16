@@ -133,7 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_classified_cities_active ON classified_available_
 
 CREATE TABLE IF NOT EXISTS classified_available_areas (
   id varchar(36) PRIMARY KEY,
-  city_id varchar(36),
+  city_id varchar(36) REFERENCES classified_available_cities(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   name varchar(255) NOT NULL,
   postal_code varchar(32),
   is_active boolean NOT NULL DEFAULT true,

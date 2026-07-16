@@ -41,12 +41,19 @@ export function resolveCommissionPercent(inputs: CommissionInputs): number {
 
 /** Resolves the per-vendor max-redemption % (vendor override → plan default → 0). */
 export function resolveMaxRedemptionPercent(inputs: {
+  productMaxRedemptionPercent?: string | number | null;
   vendorMaxRedemptionPercent?: string | number | null;
   vendorPlanMaxUserRedemptionPercent?: string | number | null;
 }): number {
-  const v = pctNumber(inputs.vendorMaxRedemptionPercent);
+  const redemptionPct = (value: unknown): number | null => {
+    const parsed = pctNumber(value);
+    return parsed == null ? null : Math.min(100, Math.max(0, parsed));
+  };
+  const product = redemptionPct(inputs.productMaxRedemptionPercent);
+  if (product != null) return product;
+  const v = redemptionPct(inputs.vendorMaxRedemptionPercent);
   if (v != null) return v;
-  const p = pctNumber(inputs.vendorPlanMaxUserRedemptionPercent);
+  const p = redemptionPct(inputs.vendorPlanMaxUserRedemptionPercent);
   if (p != null) return p;
   return 0;
 }
