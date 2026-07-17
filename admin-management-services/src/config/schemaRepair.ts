@@ -806,7 +806,7 @@ export async function repairVendorBookingAvailabilitySchema(): Promise<void> {
   }
 }
 
-const PLATFORM_VARIABLE_SEEDS: { key: string; valueAmount: number; category: string; description: string }[] = [
+const PLATFORM_VARIABLE_SEEDS: { key: string; valueAmount?: number; stringValue?: string; category: string; description: string }[] = [
   { key: 'WELCOME_BONUS', valueAmount: 300, category: 'Loyalty', description: 'Points credited to a new customer on signup' },
   { key: 'REFERRAL_BONUS', valueAmount: 100, category: 'Loyalty', description: 'Points credited to a customer after their referred friend places a first order' },
   { key: 'VENDOR_REFERRAL_BONUS', valueAmount: 200, category: 'Loyalty', description: 'Points credited to a vendor after their referred vendor is approved' },
@@ -818,6 +818,8 @@ const PLATFORM_VARIABLE_SEEDS: { key: string; valueAmount: number; category: str
   { key: 'MIN_CART_VALUE', valueAmount: 0, category: 'Checkout', description: 'Minimum cart value required to checkout' },
   { key: 'SURGE_COST', valueAmount: 0, category: 'Checkout', description: 'Surge fee added to orders (peak load / time-based)' },
   { key: 'DELIVERY_FEE', valueAmount: 0, category: 'Checkout', description: 'Default delivery fee added to orders' },
+  { key: 'ADVERTISEMENT_PER_POSTS', valueAmount: 5, category: 'Socio', description: 'Insert one hybrid advertisement after this many Socio posts or stories' },
+  { key: 'SOCIO_AD_MODE', stringValue: 'prefer_admin_then_admob', category: 'Socio', description: 'Socio hybrid ad selection mode' },
 ];
 
 export async function seedPlatformVariableDefaults(): Promise<void> {
@@ -839,14 +841,16 @@ export async function seedPlatformVariableDefaults(): Promise<void> {
 
     let seeded = 0;
     for (const seed of PLATFORM_VARIABLE_SEEDS) {
-      const valueJson = JSON.stringify({
-        amount: seed.valueAmount,
-        valueType: 'FLAT',
-        currencyType: seed.key.includes('PERCENT')
-          ? 'None'
-          : (seed.key.endsWith('_POINTS') || seed.key.endsWith('_BONUS') ? 'Points' : 'Ruppees'),
-        description: seed.description,
-      });
+      const valueJson = JSON.stringify(seed.stringValue
+        ? { value: seed.stringValue, description: seed.description }
+        : {
+            amount: seed.valueAmount,
+            valueType: 'FLAT',
+            currencyType: seed.key.includes('PERCENT')
+              ? 'None'
+              : (seed.key.endsWith('_POINTS') || seed.key.endsWith('_BONUS') ? 'Points' : 'Ruppees'),
+            description: seed.description,
+          });
       try {
         const [exists] = await connection.query<RowDataPacket[]>(
           `SELECT 1 FROM admin_platform_variables WHERE LOWER(TRIM(\`key\`)) = LOWER(TRIM(?)) LIMIT 1`,

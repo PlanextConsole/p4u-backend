@@ -175,7 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_classified_vendors_active ON classified_vendors (
 
 -- ── Content ──
 CREATE TABLE IF NOT EXISTS content_ad_feed_items (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   title varchar(255) NOT NULL,
   image_url varchar(512),
   redirect_url varchar(512),

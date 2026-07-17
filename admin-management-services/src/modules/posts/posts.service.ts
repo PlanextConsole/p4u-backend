@@ -7,6 +7,7 @@ import { SocialPostComment } from './entities/SocialPostComment';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
 import { UpdateObjectionableLogDto } from './dto/update-objectionable-log.dto';
+import { randomUUID } from 'crypto';
 
 export class PostsAdminService {
   private audit = new AuditService();
@@ -34,6 +35,7 @@ export class PostsAdminService {
   async createAdvertisementFeedItem(dto: any, actorSub: string, ip: string | undefined): Promise<AdvertisementFeedItem> {
     const repo = AppDataSource.getRepository(AdvertisementFeedItem);
     const row = repo.create({
+      id: randomUUID(),
       title: dto.title,
       imageUrl: dto.imageUrl ?? null,
       redirectUrl: dto.redirectUrl ?? null,

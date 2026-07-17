@@ -105,6 +105,15 @@ export function createSocioRoutes(): Router {
   );
 
   router.get(
+    '/feed/ad-config',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (_req: Request, res: Response) => {
+      sendSuccess(res, await feedSvc.getSocioAdConfig());
+    }
+  );
+
+  router.get(
     '/posts/saved',
     requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
     requirePermission('social.feed.read'),

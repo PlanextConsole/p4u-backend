@@ -5,6 +5,7 @@ import { UserFollow } from '../entities/UserFollow';
 import { deleteMediaByIds } from '../service/socialMediaStorage.service';
 import { resolveAuthor, resolveAuthorMap, withAuthor } from '../service/authorProfile.service';
 import { normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
+import { getPlatformVarNumber, getSocioAdMode, PLATFORM_VAR_KEYS } from './platformVariable.reader';
 
 /** Attaches userName/userAvatar to a list of posts in a single profile lookup. */
 async function withAuthors<T extends { authorId: string }>(rows: T[]): Promise<Array<T & { userName: string; userAvatar: string | null }>> {
@@ -28,6 +29,17 @@ function withNormalizedMedia<T extends { mediaUrls?: string[] | null }>(post: T)
 }
 
 export class FeedService {
+
+  async getSocioAdConfig() {
+    const [configuredEvery, mode] = await Promise.all([
+      getPlatformVarNumber(PLATFORM_VAR_KEYS.ADVERTISEMENT_PER_POSTS),
+      getSocioAdMode(),
+    ]);
+    return {
+      adEveryN: Math.max(1, Math.min(100, Math.trunc(configuredEvery || 5))),
+      mode,
+    };
+  }
   async createPost(
     authorId: string,
     authorType: string,
@@ -178,12 +190,13 @@ export class FeedService {
     const cap = Math.max(1, Math.min(limit, 20));
     let rows: Array<Record<string, unknown>>;
     try {
+      const postgres = AppDataSource.options.type === 'postgres';
       rows = await AppDataSource.query(
-        `SELECT id, title, image_url AS imageUrl, redirect_url AS redirectUrl, metadata, sort_order AS sortOrder
+        `SELECT id, title, image_url, redirect_url, metadata, sort_order, created_at
          FROM content_ad_feed_items
          WHERE status = 'active'
          ORDER BY sort_order ASC, updated_at DESC
-         LIMIT ?`,
+         LIMIT ${postgres ? '$1' : '?'}`,
         [cap * 4],
       );
     } catch {
@@ -203,23 +216,77 @@ export class FeedService {
       if (typeof pages === 'string') return pages.split(',').map((s) => s.trim()).includes('socio');
       return false;
     };
-    const out: Array<Record<string, unknown>> = [];
-    for (const r of rows) {
+    const now = Date.now();
+    const eligible = rows.flatMap((r) => {
       const meta = parseMeta(r.metadata);
-      if (!isSocio(meta)) continue;
-      const image =
-        (typeof meta.desktopImageUrl === 'string' && meta.desktopImageUrl) ||
-        (typeof meta.mobileImageUrl === 'string' && meta.mobileImageUrl) ||
-        (typeof r.imageUrl === 'string' ? r.imageUrl : null);
+      if (!isSocio(meta)) return [];
+      const starts = meta.startDate ? Date.parse(String(meta.startDate)) : NaN;
+      const ends = meta.endDate ? Date.parse(String(meta.endDate)) : NaN;
+      if ((!Number.isNaN(starts) && starts > now) || (!Number.isNaN(ends) && ends + 86_400_000 <= now)) return [];
+      return [{ row: r, meta }];
+    });
+
+    const productIds = [...new Set(eligible.map(({ meta }) => String(meta.productId ?? meta.selectedProductId ?? '').trim()).filter(Boolean))];
+    const directVendorIds = [...new Set(eligible.map(({ meta }) => String(meta.vendorId ?? meta.selectedVendorId ?? '').trim()).filter(Boolean))];
+    const productVendors = new Map<string, string>();
+    const trendingVendors = new Set<string>();
+    try {
+      const postgres = AppDataSource.options.type === 'postgres';
+      if (productIds.length) {
+        const placeholders = productIds.map((_, i) => postgres ? `$${i + 1}` : '?').join(',');
+        const products = await AppDataSource.query(
+          `SELECT id, vendor_id FROM catalog_products WHERE CAST(id AS ${postgres ? 'TEXT' : 'CHAR'}) IN (${placeholders})`,
+          productIds,
+        ) as Array<Record<string, unknown>>;
+        for (const product of products) productVendors.set(String(product.id), String(product.vendor_id ?? ''));
+      }
+      const vendorIds = [...new Set([...directVendorIds, ...productVendors.values()].filter(Boolean))];
+      if (vendorIds.length) {
+        const placeholders = vendorIds.map((_, i) => postgres ? `$${i + 1}` : '?').join(',');
+        const vendors = await AppDataSource.query(
+          `SELECT id, trending FROM catalog_vendors WHERE CAST(id AS ${postgres ? 'TEXT' : 'CHAR'}) IN (${placeholders})`,
+          vendorIds,
+        ) as Array<Record<string, unknown>>;
+        for (const vendor of vendors) {
+          if (vendor.trending === true || vendor.trending === 1 || vendor.trending === '1') trendingVendors.add(String(vendor.id));
+        }
+      }
+    } catch {
+      // Catalog lookup is ranking-only; active admin ads still work if it is unavailable.
+    }
+
+    eligible.sort((a, b) => {
+      const aProduct = String(a.meta.productId ?? a.meta.selectedProductId ?? '').trim();
+      const bProduct = String(b.meta.productId ?? b.meta.selectedProductId ?? '').trim();
+      const aVendor = String(a.meta.vendorId ?? a.meta.selectedVendorId ?? productVendors.get(aProduct) ?? '').trim();
+      const bVendor = String(b.meta.vendorId ?? b.meta.selectedVendorId ?? productVendors.get(bProduct) ?? '').trim();
+      const trendDiff = Number(trendingVendors.has(bVendor)) - Number(trendingVendors.has(aVendor));
+      if (trendDiff) return trendDiff;
+      return Number(a.row.sort_order ?? 0) - Number(b.row.sort_order ?? 0);
+    });
+
+    const out: Array<Record<string, unknown>> = [];
+    for (const { row: r, meta } of eligible) {
+      const desktopImage = (typeof meta.desktopImageUrl === 'string' && meta.desktopImageUrl) || (typeof r.image_url === 'string' ? r.image_url : null);
+      const mobileImage = (typeof meta.mobileImageUrl === 'string' && meta.mobileImageUrl) || desktopImage;
+      const productId = String(meta.productId ?? meta.selectedProductId ?? '').trim() || null;
+      const vendorId = String(meta.vendorId ?? meta.selectedVendorId ?? (productId ? productVendors.get(productId) : '') ?? '').trim() || null;
+      const targetType = String(meta.targetType ?? meta.linkType ?? (productId ? 'Product' : vendorId ? 'Vendor' : 'Custom URL'));
       out.push({
         id: `ad-${r.id}`,
         isSponsored: true,
         title: r.title,
-        image: image ? normalizeMediaUrl(String(image)) : null,
+        image: desktopImage ? normalizeMediaUrl(String(desktopImage)) : null,
+        desktopImage: desktopImage ? normalizeMediaUrl(String(desktopImage)) : null,
+        mobileImage: mobileImage ? normalizeMediaUrl(String(mobileImage)) : null,
         caption: (typeof meta.caption === 'string' && meta.caption) || (typeof meta.description === 'string' && meta.description) || '',
         advertiser: typeof meta.advertiser === 'string' ? meta.advertiser : '',
-        redirectUrl: (typeof r.redirectUrl === 'string' && r.redirectUrl) || null,
-        createdAt: r.createdAt ?? null,
+        redirectUrl: (typeof r.redirect_url === 'string' && r.redirect_url) || null,
+        targetType,
+        productId,
+        vendorId,
+        trendingVendor: vendorId ? trendingVendors.has(vendorId) : false,
+        createdAt: r.created_at ?? null,
       });
       if (out.length >= cap) break;
     }
