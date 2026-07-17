@@ -82,6 +82,11 @@ You should see new commits (not only *Already up to date*) when a deploy is need
 
 All services live under `/opt/p4u/backend/<service-name>/`.
 
+> Use `npm ci --include=dev` for every build. The VPS runs with
+> `NODE_ENV=production`, and plain `npm ci` can omit TypeScript and `@types/*`
+> packages, causing TS7016/TS7006 compilation errors. Runtime processes still
+> start from the compiled `dist/` output.
+
 | PM2 name | Folder | Port |
 |----------|--------|------|
 | `discovery` | `p4u-discovery-service` | 8761 |
@@ -101,7 +106,7 @@ All services live under `/opt/p4u/backend/<service-name>/`.
 
 ```bash
 cd /opt/p4u/backend/vendor-management-services
-npm ci
+npm ci --include=dev
 npm run build
 ```
 
@@ -113,7 +118,7 @@ for svc in auth-management-services vendor-management-services catalog-managemen
   socio-management-services; do
   echo "=== Building $svc ==="
   cd /opt/p4u/backend/$svc
-  npm ci
+  npm ci --include=dev
   npm run build
 done
 ```
@@ -164,7 +169,7 @@ Auth loads `.env` from `/opt/p4u/backend/auth-management-services` via `dotenv/c
 cd /opt/p4u/admin-web
 git pull origin main
 export VITE_API_GATEWAY_URL=https://api.planext4u.com
-npm ci
+npm ci --include=dev
 npm run build
 # Output: /opt/p4u/admin-web/dist  (nginx root)
 ```
@@ -176,7 +181,7 @@ Env template: [`deploy/admin-web.env.production`](deploy/admin-web.env.productio
 ```bash
 cd /opt/p4u/user-web
 git pull origin main
-npm ci
+npm ci --include=dev
 npm run build
 pm2 restart user-web
 ```
@@ -188,7 +193,7 @@ Ensure production env sets `NEXT_PUBLIC_API_GATEWAY_URL=https://api.planext4u.co
 ```bash
 cd /opt/p4u/vendor-web
 git pull origin main
-npm ci
+npm ci --include=dev
 npm run build
 pm2 restart vendor-web
 ```
@@ -301,9 +306,9 @@ UPLOAD_DIR=/opt/p4u/storage/socio-uploads
 After setup or upload-path code changes:
 
 ```bash
-cd /opt/p4u/backend/admin-management-services && npm ci && npm run build
-cd /opt/p4u/backend/vendor-management-services && npm ci && npm run build
-cd /opt/p4u/backend/socio-management-services && npm ci && npm run build
+cd /opt/p4u/backend/admin-management-services && npm ci --include=dev && npm run build
+cd /opt/p4u/backend/vendor-management-services && npm ci --include=dev && npm run build
+cd /opt/p4u/backend/socio-management-services && npm ci --include=dev && npm run build
 pm2 restart admin vendor socio gateway
 pm2 save
 ```
@@ -336,8 +341,8 @@ On first socio service start after deploy, legacy `social_media.data` blobs are 
 
 ```bash
 cd /opt/p4u/backend && git pull origin main
-cd /opt/p4u/backend/auth-management-services && npm ci && npm run build
-cd /opt/p4u/backend/vendor-management-services && npm ci && npm run build
+cd /opt/p4u/backend/auth-management-services && npm ci --include=dev && npm run build
+cd /opt/p4u/backend/vendor-management-services && npm ci --include=dev && npm run build
 pm2 restart auth vendor
 pm2 restart gateway
 ```
@@ -347,15 +352,15 @@ pm2 restart gateway
 ```bash
 cd /opt/p4u/admin-web && git pull origin main
 export VITE_API_GATEWAY_URL=https://api.planext4u.com
-npm ci && npm run build
+npm ci --include=dev && npm run build
 # nginx picks up dist/ automatically
 ```
 
 ### User / vendor session or auth UI
 
 ```bash
-cd /opt/p4u/user-web && git pull origin main && npm ci && npm run build && pm2 restart user-web
-cd /opt/p4u/vendor-web && git pull origin main && npm ci && npm run build && pm2 restart vendor-web
+cd /opt/p4u/user-web && git pull origin main && npm ci --include=dev && npm run build && pm2 restart user-web
+cd /opt/p4u/vendor-web && git pull origin main && npm ci --include=dev && npm run build && pm2 restart vendor-web
 ```
 
 ### Full stack release
@@ -371,9 +376,9 @@ pm2 restart discovery auth admin catalog content profile commerce payment notifi
 pm2 restart gateway
 
 export VITE_API_GATEWAY_URL=https://api.planext4u.com
-cd /opt/p4u/admin-web && npm ci && npm run build
-cd /opt/p4u/user-web && npm ci && npm run build && pm2 restart user-web
-cd /opt/p4u/vendor-web && npm ci && npm run build && pm2 restart vendor-web
+cd /opt/p4u/admin-web && npm ci --include=dev && npm run build
+cd /opt/p4u/user-web && npm ci --include=dev && npm run build && pm2 restart user-web
+cd /opt/p4u/vendor-web && npm ci --include=dev && npm run build && pm2 restart vendor-web
 ```
 
 ---
