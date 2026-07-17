@@ -110,6 +110,44 @@ export function createVendorRoutes(): Router {
     }
   );
 
+  // Registration document upload for authenticated customers who do not yet
+  // have a vendor context. Supports the same PDF/image fields as the vendor
+  // registration wizard without requiring the VENDOR role.
+  router.post(
+    '/register/upload',
+    requireAnyRole(['CUSTOMER']),
+    requirePermission('vendor.register'),
+    (req: Request, res: Response, next) => {
+      const auth = (req as any).auth;
+      const customerId = String(auth?.sub || auth?.customer_id || '').trim();
+      if (!customerId) return sendBadRequest(res, 'Customer context missing');
+      (req as any).vendorUploadId = `registration-${customerId}`;
+      vendorDocumentUpload.single('file')(req, res, (err: unknown) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return sendBadRequest(res, 'File too large (max 12 MB)');
+          }
+          return sendBadRequest(res, err.message);
+        }
+        if (err) {
+          return sendBadRequest(res, err instanceof Error ? err.message : String(err));
+        }
+        next();
+      });
+    },
+    (req: Request, res: Response) => {
+      const uploadId = String((req as any).vendorUploadId || '');
+      const file = req.file;
+      if (!file || !uploadId) return sendBadRequest(res, 'No file uploaded');
+      sendCreated(res, {
+        url: vendorDocumentPublicUrl(uploadId, file.filename),
+        mimeType: file.mimetype,
+        size: file.size,
+        originalName: file.originalname,
+      });
+    },
+  );
+
   // --- End registration routes ---
 
   router.use(requireAnyRole(['VENDOR']));

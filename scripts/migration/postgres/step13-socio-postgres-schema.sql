@@ -2,7 +2,7 @@
 -- Shared tables (customer_profiles, commerce_settlements, etc.) already exist from earlier phases.
 
 CREATE TABLE IF NOT EXISTS social_posts (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   author_id varchar(128) NOT NULL,
   author_type varchar(16) NOT NULL DEFAULT 'customer',
   content_text text,
@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_social_user_follows_follower ON social_user_follo
 CREATE INDEX IF NOT EXISTS idx_social_user_follows_following ON social_user_follows (following_id);
 
 CREATE TABLE IF NOT EXISTS social_stories (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   author_id varchar(128) NOT NULL,
   media_url varchar(512) NOT NULL,
   media_type varchar(16) NOT NULL DEFAULT 'image',

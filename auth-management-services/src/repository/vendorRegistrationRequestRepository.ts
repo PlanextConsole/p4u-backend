@@ -1,4 +1,5 @@
 import { Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { VendorRegistrationRequest } from '../entity/VendorRegistrationRequest';
 import { jsonText } from '../util/jsonPathSql';
@@ -67,6 +68,11 @@ export class VendorRegistrationRequestRepository {
   }
 
   async save(row: VendorRegistrationRequest): Promise<VendorRegistrationRequest> {
+    // PostgreSQL deployments created by the split-schema migration use a
+    // varchar UUID primary key without a database-side default. Supplying the
+    // UUID here is portable across PostgreSQL and MySQL and also repairs
+    // inserts against those existing tables.
+    if (!row.id) row.id = randomUUID();
     return this.repository.save(row);
   }
 }

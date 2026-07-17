@@ -1,4 +1,5 @@
 import { AppDataSource } from '../config/database';
+import { randomUUID } from 'crypto';
 import { SocialPost } from '../entities/SocialPost';
 import { UserFollow } from '../entities/UserFollow';
 import { deleteMediaByIds } from '../service/socialMediaStorage.service';
@@ -58,6 +59,7 @@ export class FeedService {
 
     const saved = await repo.save(
       repo.create({
+        id: randomUUID(),
         authorId,
         authorType,
         contentText: data.contentText || null,

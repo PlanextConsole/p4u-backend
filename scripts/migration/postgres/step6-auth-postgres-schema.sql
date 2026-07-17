@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_customer_profiles_phone ON customer_profiles (pho
 CREATE INDEX IF NOT EXISTS idx_customer_profiles_status ON customer_profiles (status);
 
 CREATE TABLE IF NOT EXISTS vendor_signup_requests (
-  id            varchar(36) PRIMARY KEY,
+  id            varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   request_type  varchar(64) NOT NULL DEFAULT 'signup',
   payload       jsonb NOT NULL,
   status        varchar(32) NOT NULL DEFAULT 'pending',

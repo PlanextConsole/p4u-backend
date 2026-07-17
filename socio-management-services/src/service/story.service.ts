@@ -1,4 +1,5 @@
 import { AppDataSource } from '../config/database';
+import { randomUUID } from 'crypto';
 import { Story } from '../entities/Story';
 import { UserFollow } from '../entities/UserFollow';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
@@ -21,6 +22,7 @@ export class StoryService {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const saved = await repo.save(
       repo.create({
+        id: randomUUID(),
         authorId,
         mediaUrl: normalizeMediaUrl(data.mediaUrl) ?? data.mediaUrl,
         mediaType: data.mediaType || 'image',
