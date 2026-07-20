@@ -62,6 +62,29 @@ export function createOrdersAdminRoutes(): Router {
       res.status(status).json({ message: e.message });
     }
   });
+  r.delete('/orders/individual/:id/permanent', async (req: Request, res: Response) => {
+    try {
+      const result = await svc.permanentlyDeleteOrders(
+        [req.params.id],
+        getAuthSub(req),
+        clientIp(req),
+      );
+      res.json(result);
+    } catch (e: any) {
+      const status = e.message?.includes('not found') ? 404 : 400;
+      res.status(status).json({ message: e.message });
+    }
+  });
+  r.post('/orders/permanent-delete', async (req: Request, res: Response) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const result = await svc.permanentlyDeleteOrders(ids, getAuthSub(req), clientIp(req));
+      res.json(result);
+    } catch (e: any) {
+      const status = e.message?.includes('not found') ? 404 : 400;
+      res.status(status).json({ message: e.message });
+    }
+  });
   r.post('/orders', async (req: Request, res: Response) => {
     try {
       const dto = plainToClass(CreateOrderDto, req.body);

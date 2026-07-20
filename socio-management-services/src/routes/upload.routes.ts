@@ -88,8 +88,14 @@ async function persistUploadedFile(
 export function createSocioUploadRoutes(): Router {
   const router = Router();
 
-  router.use(jwtAuth);
-  router.use(requireAnyRole(['CUSTOMER', 'VENDOR', 'ADMIN']));
+  // This router is mounted before the main Socio router to preserve multipart
+  // streams. Keep auth limited to its own write paths so public health and
+  // media/feed routes can continue into the next router.
+  router.use(
+    ['/upload', '/media'],
+    jwtAuth,
+    requireAnyRole(['CUSTOMER', 'VENDOR', 'ADMIN']),
+  );
 
   router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
     const file = req.file;

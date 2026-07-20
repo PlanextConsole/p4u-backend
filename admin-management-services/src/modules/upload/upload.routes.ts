@@ -75,8 +75,10 @@ export const createUploadRoutes = (): Router => {
   const router = Router();
   const mediaLibrary = new MediaLibraryAdminService();
 
-  router.use(jwtAuth);
-  router.use(requireRole('ADMIN'));
+  // Scope auth to upload endpoints only. This router is mounted before the
+  // main admin router so a router-wide JWT gate would also block public
+  // endpoints such as /api/admin/public/health and published layouts.
+  router.use('/upload', jwtAuth, requireRole('ADMIN'));
 
   router.post('/upload', handleMulterSingle('file'), async (req: Request, res: Response) => {
     const file = req.file;

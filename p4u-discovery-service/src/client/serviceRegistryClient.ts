@@ -43,15 +43,16 @@ export class ServiceRegistryClient {
         }
       );
 
-      if (response.data && response.data.instance && response.data.instance.instanceId) {
-        this.registeredInstanceId = response.data.instance.instanceId;
+      const instanceId = response.data?.instance?.instanceId;
+      if (typeof instanceId === 'string' && instanceId.trim()) {
+        this.registeredInstanceId = instanceId;
         this.serviceName = registration.serviceName;
         
         // Start sending heartbeats
         this.startHeartbeat();
         
         console.log(`Service registered: ${registration.serviceName} - ${this.registeredInstanceId}`);
-        return this.registeredInstanceId;
+        return instanceId;
       }
 
       throw new Error('Invalid response from discovery service');

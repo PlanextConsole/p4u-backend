@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS admin_app_screen_layouts (
 CREATE INDEX IF NOT EXISTS idx_admin_app_screen_layouts_key ON admin_app_screen_layouts (screen_key);
 
 CREATE TABLE IF NOT EXISTS admin_audit_logs (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   actor_sub varchar(128) NOT NULL,
   action varchar(64) NOT NULL,
   entity_type varchar(64) NOT NULL,

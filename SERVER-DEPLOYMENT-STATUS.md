@@ -214,7 +214,7 @@ curl -s http://127.0.0.1:8080/health
 
 ```bash
 curl -s https://api.planext4u.com/health
-curl -s "https://api.planext4u.com/api/v1/catalog/public/products?limit=1"
+curl -s "https://api.planext4u.com/api/v1/catalog/browse/products?limit=1"
 ```
 
 ### Keycloak (Docker)

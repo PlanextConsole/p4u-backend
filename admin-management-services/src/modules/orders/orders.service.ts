@@ -1,5 +1,6 @@
-import { Brackets } from 'typeorm';
+import { Brackets, In } from 'typeorm';
 import { AppDataSource } from '../../config/database';
+import { AdminAuditLog } from '../admin-core/entities/AdminAuditLog';
 import { AuditService } from '../admin-core/services/audit.service';
 import { Customer } from '../customers/entities/Customer';
 import { Order } from './entities/Order';
@@ -11,6 +12,7 @@ import { UpdateSettlementDto } from './dto/update-settlement.dto';
 
 export class OrdersAdminService {
   private audit = new AuditService();
+  private static readonly DELETABLE_STATUSES = new Set(['cancelled', 'canceled']);
 
   async listOrders(limit: number, offset: number): Promise<{ items: Order[]; total: number }> {
     const repo = AppDataSource.getRepository(Order);
@@ -89,6 +91,49 @@ export class OrdersAdminService {
     await repo.save(row);
     await this.audit.log({ actorSub, action: 'UPDATE', entityType: 'Order', entityId: row.id, metadata: { changes: dto }, ipAddress: ip ?? null });
     return row;
+  }
+
+  async permanentlyDeleteOrders(
+    ids: string[],
+    actorSub: string,
+    ip: string | undefined,
+  ): Promise<{ deleted: number; ids: string[] }> {
+    const uniqueIds = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
+    if (uniqueIds.length === 0) throw new Error('At least one order id is required');
+    if (uniqueIds.length > 100) throw new Error('A maximum of 100 orders can be deleted at once');
+
+    return AppDataSource.transaction(async (manager) => {
+      const orderRepo = manager.getRepository(Order);
+      const orders = await orderRepo.find({ where: { id: In(uniqueIds) } });
+      if (orders.length !== uniqueIds.length) throw new Error('One or more orders were not found');
+
+      const blocked = orders.filter(
+        (order) => !OrdersAdminService.DELETABLE_STATUSES.has(String(order.status || '').toLowerCase()),
+      );
+      if (blocked.length > 0) {
+        throw new Error('Only cancelled orders can be permanently deleted');
+      }
+
+      const auditRepo = manager.getRepository(AdminAuditLog);
+      const auditRows = orders.map((order) => auditRepo.create({
+        actorSub,
+        action: 'PERMANENT_DELETE',
+        entityType: 'Order',
+        entityId: order.id,
+        metadata: {
+          orderRef: order.orderRef,
+          status: order.status,
+          vendorId: order.vendorId,
+          customerId: order.customerId,
+          totalAmount: order.totalAmount,
+        },
+        ipAddress: ip ?? null,
+      }));
+      await auditRepo.save(auditRows);
+      await orderRepo.delete(uniqueIds);
+
+      return { deleted: uniqueIds.length, ids: uniqueIds };
+    });
   }
 
   async listSettlements(kind: 'all' | 'cash' | 'points', limit: number, offset: number): Promise<{ items: Settlement[]; total: number }> {
