@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_org_orders_vendor ON commerce_organizati
 CREATE INDEX IF NOT EXISTS idx_commerce_org_orders_status ON commerce_organization_orders (status);
 
 CREATE TABLE IF NOT EXISTS commerce_settlements (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   vendor_id varchar(36),
   order_id varchar(36),
   settlement_type varchar(32) NOT NULL DEFAULT 'cash',

@@ -160,7 +160,11 @@ export function createSocioRoutes(): Router {
     async (req: Request, res: Response) => {
       const post = await feedSvc.getPost(req.params.postId);
       if (!post) return sendNotFound(res, 'Post not found');
-      sendSuccess(res, post);
+      const viewerId = userIdFromAuth(req);
+      const [enriched] = viewerId
+        ? await interactionSvc.attachPostFlags(viewerId, [post])
+        : [post];
+      sendSuccess(res, enriched);
     }
   );
 

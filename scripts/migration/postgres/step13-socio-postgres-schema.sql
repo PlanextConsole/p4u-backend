@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS idx_social_posts_author ON social_posts (author_id);
 CREATE INDEX IF NOT EXISTS idx_social_posts_status ON social_posts (status);
 
 CREATE TABLE IF NOT EXISTS social_post_likes (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   post_id varchar(36) NOT NULL,
   user_id varchar(128) NOT NULL,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_social_post_likes_post ON social_post_likes (post
 CREATE INDEX IF NOT EXISTS idx_social_post_likes_user ON social_post_likes (user_id);
 
 CREATE TABLE IF NOT EXISTS social_post_comments (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   post_id varchar(36) NOT NULL,
   user_id varchar(128) NOT NULL,
   parent_comment_id varchar(36),
@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_social_post_comments_post ON social_post_comments
 CREATE INDEX IF NOT EXISTS idx_social_post_comments_user ON social_post_comments (user_id);
 
 CREATE TABLE IF NOT EXISTS social_post_saves (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   post_id varchar(36) NOT NULL,
   user_id varchar(128) NOT NULL,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -55,7 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_social_post_saves_user ON social_post_saves (user
 CREATE INDEX IF NOT EXISTS idx_social_post_saves_post ON social_post_saves (post_id);
 
 CREATE TABLE IF NOT EXISTS social_user_follows (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   follower_id varchar(128) NOT NULL,
   following_id varchar(128) NOT NULL,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_social_stories_author ON social_stories (author_i
 CREATE INDEX IF NOT EXISTS idx_social_stories_status ON social_stories (status);
 
 CREATE TABLE IF NOT EXISTS social_media (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   kind varchar(16) NOT NULL DEFAULT 'image',
   mime_type varchar(128) NOT NULL,
   original_name varchar(512),
@@ -96,7 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_social_media_owner ON social_media (owner_id);
 CREATE INDEX IF NOT EXISTS idx_social_media_kind ON social_media (kind);
 
 CREATE TABLE IF NOT EXISTS social_conversations (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   participant_one_id varchar(128) NOT NULL,
   participant_two_id varchar(128) NOT NULL,
   last_message_text text,
@@ -110,7 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_social_conv_one ON social_conversations (particip
 CREATE INDEX IF NOT EXISTS idx_social_conv_two ON social_conversations (participant_two_id);
 
 CREATE TABLE IF NOT EXISTS social_messages (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   conversation_id varchar(36) NOT NULL,
   sender_id varchar(128) NOT NULL,
   content_text text,

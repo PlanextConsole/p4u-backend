@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_customer_referrals_referrer ON customer_referrals
 CREATE INDEX IF NOT EXISTS idx_customer_referrals_code ON customer_referrals (referral_code);
 
 CREATE TABLE IF NOT EXISTS customer_reward_points_ledger (
-  id varchar(36) PRIMARY KEY,
+  id varchar(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
   customer_id varchar(36) NOT NULL,
   points int NOT NULL,
   balance_after int NOT NULL,
