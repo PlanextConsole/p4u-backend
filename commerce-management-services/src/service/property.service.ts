@@ -2,9 +2,72 @@ import { randomUUID } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { PropertyListing } from '../entities/PropertyListing';
 
+function firstImageUrl(details: any, metadata: any): string {
+  const pick = (v: unknown): string => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  const direct = [
+    details?.imageUrl,
+    details?.coverImage,
+    details?.image_url,
+    details?.cover_image,
+    metadata?.imageUrl,
+    metadata?.coverImage,
+    metadata?.image_url,
+    metadata?.cover_image,
+  ];
+  for (const c of direct) {
+    const hit = pick(c);
+    if (hit) return hit;
+  }
+  const pools = [details?.images, details?.photos, metadata?.images, metadata?.photos];
+  for (const pool of pools) {
+    if (!Array.isArray(pool)) continue;
+    for (const img of pool) {
+      if (typeof img === 'string') {
+        const hit = pick(img);
+        if (hit) return hit;
+      } else if (img && typeof img === 'object') {
+        const hit = pick(
+          (img as any).url ||
+            (img as any).src ||
+            (img as any).path ||
+            (img as any).imageUrl ||
+            (img as any).image_url,
+        );
+        if (hit) return hit;
+      }
+    }
+  }
+  return '';
+}
+
+function imageList(details: any, metadata: any): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (v: string) => {
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+  const cover = firstImageUrl(details, metadata);
+  if (cover) push(cover);
+  for (const pool of [details?.images, details?.photos, metadata?.images]) {
+    if (!Array.isArray(pool)) continue;
+    for (const img of pool) {
+      if (typeof img === 'string') push(img.trim());
+      else if (img && typeof img === 'object') {
+        const u = String((img as any).url || (img as any).src || (img as any).path || (img as any).imageUrl || '').trim();
+        if (u) push(u);
+      }
+    }
+  }
+  return out;
+}
+
 function view(row: PropertyListing) {
   const details: any = row.details || {};
   const metadata: any = row.metadata || {};
+  const images = imageList(details, metadata);
+  const cover = images[0] || '';
   return {
     ...row,
     transaction_type: row.listingType,
@@ -12,9 +75,10 @@ function view(row: PropertyListing) {
     moderation_status: row.moderationStatus,
     status: row.moderationStatus,
     user_id: row.customerId,
-    image_url: details.imageUrl || details.coverImage || metadata.imageUrl || '',
-    cover_image: details.coverImage || details.imageUrl || '',
-    images: details.images || [],
+    photoCount: Math.max(Number(row.photoCount || 0), images.length),
+    image_url: cover,
+    cover_image: cover,
+    images,
     description: details.description || '',
     bhk: details.bhk ?? null,
     area_sqft: details.areaSqft ?? details.area_sqft ?? null,
