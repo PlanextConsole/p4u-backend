@@ -1,7 +1,7 @@
 import { createConnection, RowDataPacket } from 'mysql2/promise';
 import { isPostgresDbType } from './database';
 
-const PgClient = require('pg').Client;
+
 
 /**
  * Ensures commerce_cart_items.variation_id exists.
@@ -52,6 +52,7 @@ async function repairMysql(): Promise<void> {
 }
 
 async function repairPostgres(): Promise<void> {
+  const PgClient = require('pg').Client;
   const client = new PgClient({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432', 10),

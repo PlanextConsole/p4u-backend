@@ -122,7 +122,7 @@ export const createAuthRoutes = (
    * tokens (for an existing user — phone-claim) or a short-lived registration
    * token the FE then posts back with profile fields.
    *
-   * Body: { idToken: string, intendedRole?: 'CUSTOMER' | 'VENDOR' }
+   * Body: { idToken: string, intendedRole?: 'CUSTOMER' | 'VENDOR' | 'RIDER' }
    */
   router.post(
     '/public/phone/exchange',
@@ -136,7 +136,7 @@ export const createAuthRoutes = (
           return res.status(400).json({ message: errorMessages.join(', ') });
         }
         const idToken = dto.idToken.trim();
-        const role = String(dto.intendedRole || 'CUSTOMER').toUpperCase() as 'CUSTOMER' | 'VENDOR';
+        const role = String(dto.intendedRole || 'CUSTOMER').toUpperCase() as 'CUSTOMER' | 'VENDOR' | 'RIDER';
         const result = await phoneAuthService.phoneExchange(idToken, role);
         return res.json(result);
       } catch (error: any) {

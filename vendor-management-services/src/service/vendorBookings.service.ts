@@ -1,8 +1,19 @@
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { Booking } from '../entities/Booking';
 import { Vendor } from '../entities/Vendor';
 import { enrichBookingForVendorPortal, enrichBookingsForVendorPortal } from './bookingEnrichment';
 
+function bookingMeta(row: Booking): Record<string, any> {
+  return row.metadata && typeof row.metadata === 'object' ? { ...row.metadata } : {};
+}
+
+function completionOtp(bookingId: string, nonce: string): string {
+  const secret = process.env.SERVICE_COMPLETION_OTP_SECRET;
+  if (!secret) throw new Error('Service completion OTP secret is not configured');
+  const hex = createHmac('sha256', secret).update(`${bookingId}:${nonce}`).digest('hex').slice(0, 12);
+  return String(parseInt(hex, 16) % 1000000).padStart(6, '0');
+}
 export class VendorBookingsService {
   private repo = AppDataSource.getRepository(Booking);
   private readonly approvableStatuses = new Set(['pending']);
@@ -74,4 +85,44 @@ export class VendorBookingsService {
     const saved = await this.repo.save(row);
     return enrichBookingForVendorPortal(saved);
   }
-}
+
+  async submitCompletionProof(vendorId: string, bookingId: string, input: Record<string, any>) {
+    await this.assertServiceVendor(vendorId);
+    return AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({ where: { id: bookingId, vendorId }, lock: { mode: 'pessimistic_write' } });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row); const existing = meta.completionProof as Record<string, any> | undefined;
+      if (row.status === 'completion_pending' && existing?.otpNonce) return { ...row, duplicate: true };
+      if (row.status !== 'in_progress') throw new Error('Only in-progress bookings can submit completion proof');
+      const photoUrls = Array.isArray(input.photoUrls) ? input.photoUrls.map(String).filter(Boolean).slice(0, 5) : [];
+      if (!photoUrls.length) throw new Error('At least one completion photo is required');
+      const nonce = randomUUID(); const now = new Date();
+      meta.completionProof = { status: 'awaiting_customer_otp', photoUrls, notes: String(input.notes || '').trim(), submittedAt: now.toISOString(), otpNonce: nonce, otpExpiresAt: new Date(now.getTime() + 15 * 60000).toISOString(), attempts: 0 };
+      row.status = 'completion_pending'; row.metadata = meta;
+      const saved = await repo.save(row); return { ...saved, metadata: { ...meta, completionProof: { ...(meta.completionProof as any), otpNonce: undefined } } };
+    });
+  }
+
+  async verifyCompletionOtp(vendorId: string, bookingId: string, otp: string) {
+    await this.assertServiceVendor(vendorId);
+    return AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({ where: { id: bookingId, vendorId }, lock: { mode: 'pessimistic_write' } });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row); const proof = { ...(meta.completionProof || {}) } as Record<string, any>;
+      if (row.status === 'completion_pending_confirmation' && proof.otpVerifiedAt) return { ...row, duplicate: true };
+      if (row.status !== 'completion_pending' || !proof.otpNonce) throw new Error('Completion proof must be submitted first');
+      if (Date.now() > new Date(proof.otpExpiresAt).getTime()) throw new Error('Completion OTP has expired');
+      const attempts = Number(proof.attempts || 0);
+      if (attempts >= 5) throw new Error('Too many invalid OTP attempts');
+      const expected = Buffer.from(completionOtp(bookingId, String(proof.otpNonce)));
+      const supplied = Buffer.from(String(otp || '').trim());
+      if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+        proof.attempts = attempts + 1; row.metadata = { ...meta, completionProof: proof }; await repo.save(row); throw new Error('Invalid completion OTP');
+      }
+      proof.status = 'otp_verified'; proof.otpVerifiedAt = new Date().toISOString(); delete proof.otpNonce;
+      row.status = 'completion_pending_confirmation'; row.metadata = { ...meta, completionProof: proof };
+      return repo.save(row);
+    });
+  }}

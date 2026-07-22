@@ -7,8 +7,8 @@ export class PhoneExchangeRequest {
 
   @IsOptional()
   @IsString()
-  @IsIn(['CUSTOMER', 'VENDOR', 'customer', 'vendor'], {
-    message: "intendedRole must be 'CUSTOMER' or 'VENDOR'",
+  @IsIn(['CUSTOMER', 'VENDOR', 'RIDER', 'customer', 'vendor', 'rider'], {
+    message: "intendedRole must be 'CUSTOMER', 'VENDOR' or 'RIDER'",
   })
   intendedRole?: string;
 }

@@ -28,8 +28,8 @@ app.use(
 );
 app.use(express.json());
 
-app.use('/api/v1/payments', createPaymentRoutes());
 app.use('/api/v1/payments', createWebhookRoutes());
+app.use('/api/v1/payments', createPaymentRoutes());
 
 app.get('/', (_req: Request, res: Response) => {
   res.json({

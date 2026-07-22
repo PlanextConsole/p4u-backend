@@ -5,6 +5,7 @@ import { StoryService } from '../service/story.service';
 import { SocioProfileService } from '../service/socioProfile.service';
 import { MessageService } from '../service/message.service';
 import { SocioSettingsService } from '../service/socioSettings.service';
+import { CallService } from '../service/call.service';
 import { jwtAuth, requireAnyRole, requirePermission } from '../middleware/authMiddleware';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden } from '../middleware/responseEnvelope';
 
@@ -52,6 +53,7 @@ export function createSocioRoutes(): Router {
   const profileSvc = new SocioProfileService();
   const messageSvc = new MessageService();
   const settingsSvc = new SocioSettingsService();
+  const callSvc = new CallService();
 
   /* ───── public health ───── */
   router.get('/public/health', (_req: Request, res: Response) => {
@@ -636,5 +638,13 @@ export function createSocioRoutes(): Router {
     },
   );
 
+  router.get('/calls', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.feed.read'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');sendSuccess(res,await callSvc.list(id));});
+  router.post('/calls', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.interact'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendCreated(res,await callSvc.start(id,String(req.body?.conversationId||''),req.body||{}));}catch(e:any){if(handleInteractionError(res,e))return;res.status(e.statusCode||400).json({success:false,error:{message:e.message}});}});
+  router.get('/calls/:callId', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.feed.read'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendSuccess(res,await callSvc.get(id,req.params.callId));}catch(e:any){if(handleInteractionError(res,e))return;sendBadRequest(res,e.message);}});
+  router.post('/calls/:callId/accept', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.interact'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendSuccess(res,await callSvc.accept(id,req.params.callId,req.body?.answerSdp));}catch(e:any){if(handleInteractionError(res,e))return;sendBadRequest(res,e.message);}});
+  router.post('/calls/:callId/reject', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.interact'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendSuccess(res,await callSvc.reject(id,req.params.callId));}catch(e:any){if(handleInteractionError(res,e))return;sendBadRequest(res,e.message);}});
+  router.post('/calls/:callId/end', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.interact'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendSuccess(res,await callSvc.end(id,req.params.callId));}catch(e:any){if(handleInteractionError(res,e))return;sendBadRequest(res,e.message);}});
+  router.post('/calls/:callId/signals', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.interact'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendCreated(res,await callSvc.signal(id,req.params.callId,req.body||{}));}catch(e:any){if(handleInteractionError(res,e))return;sendBadRequest(res,e.message);}});
+  router.get('/calls/:callId/signals', requireAnyRole(['ADMIN','CUSTOMER','VENDOR']), requirePermission('social.feed.read'), async(req:Request,res:Response)=>{const id=userIdFromAuth(req);if(!id)return sendBadRequest(res,'user id missing in token');try{sendSuccess(res,await callSvc.signals(id,req.params.callId,Number(req.query.since||0)));}catch(e:any){if(handleInteractionError(res,e))return;sendBadRequest(res,e.message);}});
   return router;
 }

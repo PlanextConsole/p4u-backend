@@ -38,6 +38,7 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
   ADMIN: ['*'],
   CUSTOMER: ['notification.read.self', 'notification.device.register'],
   VENDOR: ['notification.read.self', 'notification.device.register'],
+  RIDER: ['notification.read.self', 'notification.device.register'],
 };
 
 const getRoles = (auth: any): string[] => (auth?.realm_access?.roles || []).map((r: string) => String(r).toUpperCase());

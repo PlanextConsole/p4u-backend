@@ -9,9 +9,13 @@ import {
   requireShopperRole,
   requirePermission,
   requireCustomerSelfOrAdmin,
+  requireAnyRole,
 } from '../middleware/authMiddleware';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendServerError, sendUnauthorized, sendForbidden } from '../middleware/responseEnvelope';
 import { resolveVendorIdFromAuth } from '../service/vendorContext.service';
+import { ProductLifecycleService } from '../service/productLifecycle.service';
+import { PropertyService } from '../service/property.service';
+import { SupportService, SupportActorType } from '../service/support.service';
 
 function customerIdFromAuth(req: Request): string | null {
   const auth = (req as any).auth;
@@ -26,6 +30,9 @@ export function createCommerceRoutes(): Router {
   const couponSvc = new CouponService();
   const bookingSvc = new BookingService();
   const reviewSvc = new ReviewService();
+  const productLifecycle = new ProductLifecycleService();
+  const propertySvc = new PropertyService();
+  const supportSvc = new SupportService();
 
   const parsePaging = (req: Request) => {
     const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
@@ -55,6 +62,32 @@ export function createCommerceRoutes(): Router {
 
   router.use(jwtAuth);
 
+  const supportActor = (req: Request): { id: string; type: SupportActorType } => {
+    const auth = (req as any).auth;
+    const roles = (auth?.realm_access?.roles || []).map((x: string) => x.toUpperCase());
+    return { id: String(auth?.sub || ''), type: roles.includes('ADMIN') ? 'admin' : roles.includes('VENDOR') ? 'vendor' : 'customer' };
+  };
+  router.get('/support/tickets', requireShopperRole, async (req: Request, res: Response) => { const actor=supportActor(req); try { sendSuccess(res,await supportSvc.list(actor.id,actor.type,{status:String(req.query.status||'')||undefined,q:String(req.query.q||'')||undefined,limit:Number(req.query.limit||20),offset:Number(req.query.offset||0)})); } catch(e:any){sendBadRequest(res,e.message);} });
+  router.post('/support/tickets', requireAnyRole(['CUSTOMER','VENDOR']), async (req: Request,res: Response)=>{const actor=supportActor(req);try{sendCreated(res,await supportSvc.create(actor.id,actor.type as 'customer'|'vendor',req.body||{}));}catch(e:any){sendBadRequest(res,e.message);}});
+  router.get('/support/tickets/:id', requireShopperRole, async(req:Request,res:Response)=>{const actor=supportActor(req);try{sendSuccess(res,await supportSvc.get(req.params.id,actor.id,actor.type));}catch(e:any){sendNotFound(res,e.message);}});
+  router.post('/support/tickets/:id/messages', requireShopperRole, async(req:Request,res:Response)=>{const actor=supportActor(req);try{sendCreated(res,await supportSvc.addMessage(req.params.id,actor.id,actor.type,req.body||{}));}catch(e:any){e.message.includes('not found')?sendNotFound(res,e.message):sendBadRequest(res,e.message);}});
+  router.patch('/support/tickets/:id/close', requireAnyRole(['CUSTOMER','VENDOR']), async(req:Request,res:Response)=>{const actor=supportActor(req);try{sendSuccess(res,await supportSvc.close(req.params.id,actor.id,actor.type as 'customer'|'vendor'));}catch(e:any){sendNotFound(res,e.message);}});
+  router.patch('/support/admin/tickets/:id', requireAnyRole(['ADMIN']), async(req:Request,res:Response)=>{const actor=supportActor(req);try{sendSuccess(res,await supportSvc.administer(req.params.id,actor.id,req.body||{}));}catch(e:any){e.message.includes('not found')?sendNotFound(res,e.message):sendBadRequest(res,e.message);}});
+  router.get('/properties', requireShopperRole, async (req: Request, res: Response) => {
+    const { limit, offset } = parsePaging(req); try { sendSuccess(res, await propertySvc.list({ q: String(req.query.q || '').trim() || undefined, type: String(req.query.type || '').trim() || undefined, propertyType: String(req.query.propertyType || '').trim() || undefined, minPrice: req.query.minPrice == null ? undefined : Number(req.query.minPrice), maxPrice: req.query.maxPrice == null ? undefined : Number(req.query.maxPrice), limit, offset })); } catch (e:any) { sendBadRequest(res,e.message); }
+  });
+  router.get('/properties/mine', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);sendSuccess(res,await propertySvc.my(id));});
+  router.get('/properties/:id', requireShopperRole, async (req: Request,res: Response)=>{const row=await propertySvc.get(req.params.id,customerIdFromAuth(req)||undefined);if(!row)return sendNotFound(res,'Property not found');sendSuccess(res,row);});
+  router.post('/properties', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);try{sendCreated(res,await propertySvc.create(id,req.body||{}));}catch(e:any){sendBadRequest(res,e.message);}});
+  router.patch('/properties/:id', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);try{sendSuccess(res,await propertySvc.update(id,req.params.id,req.body||{}));}catch(e:any){if(e.message==='Property not found')return sendNotFound(res,e.message);sendBadRequest(res,e.message);}});
+  router.delete('/properties/:id', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);try{await propertySvc.remove(id,req.params.id);sendSuccess(res,{deleted:true});}catch(e:any){sendNotFound(res,e.message);}});
+  router.post('/properties/:id/inquiries', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);try{sendCreated(res,await propertySvc.inquire(id,req.params.id,String(req.body?.message||'')));}catch(e:any){sendBadRequest(res,e.message);}});
+  router.get('/property-messages', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);sendSuccess(res,await propertySvc.messages(id));});
+  router.get('/property-saved-searches', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);sendSuccess(res,await propertySvc.savedSearches(id));});
+  router.post('/property-saved-searches', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);sendCreated(res,await propertySvc.saveSearch(id,req.body||{}));});
+  router.get('/property-rent-trackers', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);sendSuccess(res,await propertySvc.rent(id));});
+  router.put('/property-rent-trackers', requireShopperRole, async (req: Request,res: Response)=>{const id=customerIdFromAuth(req);if(!id)return sendUnauthorized(res);sendSuccess(res,await propertySvc.saveRent(id,req.body||{}));});
+  router.post('/properties/estimate', requireShopperRole, async (req: Request,res: Response)=>{sendSuccess(res,await propertySvc.estimate({city:req.body?.city,propertyType:req.body?.propertyType,bhk:req.body?.bhk}));});
   router.get(
     '/cart',
     requireShopperRole,
@@ -288,6 +321,31 @@ export function createCommerceRoutes(): Router {
 
   // ── Coupons ──────────────────────────────────────────────
 
+  router.get('/orders/:orderId/tracking', requireShopperRole, requirePermission('order.read.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res);
+    try { sendSuccess(res, await productLifecycle.tracking(customerId, req.params.orderId)); } catch (e: any) { sendBadRequest(res, e.message); }
+  });
+
+  router.post('/orders/:orderId/confirm-delivery', requireShopperRole, requirePermission('order.write.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res);
+    try { sendSuccess(res, await productLifecycle.confirmDelivery(customerId, req.params.orderId)); } catch (e: any) { sendBadRequest(res, e.message); }
+  });
+
+  router.post('/orders/:orderId/returns', requireShopperRole, requirePermission('order.write.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res);
+    try { sendCreated(res, await productLifecycle.requestReturn(customerId, req.params.orderId, req.body || {})); } catch (e: any) { sendBadRequest(res, e.message); }
+  });
+
+  router.get('/orders/:orderId/returns', requireShopperRole, requirePermission('order.read.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res);
+    try { const tracking = await productLifecycle.tracking(customerId, req.params.orderId); sendSuccess(res, tracking.returnRequest); } catch (e: any) { sendBadRequest(res, e.message); }
+  });
+
+  router.post('/admin/orders/:orderId/refund', requireShopperRole, requirePermission('payment.refund.create'), async (req: Request, res: Response) => {
+    const roles = (((req as any).auth?.realm_access?.roles || []) as string[]).map(role => role.toUpperCase());
+    if (!roles.includes('ADMIN')) return sendForbidden(res, 'Admin access required');
+    try { sendSuccess(res, await productLifecycle.executeRefund(req.params.orderId, req.headers.authorization)); } catch (e: any) { sendBadRequest(res, e.message); }
+  });
   router.post(
     '/coupons/validate',
     requireShopperRole,
@@ -435,6 +493,30 @@ export function createCommerceRoutes(): Router {
     }
   );
 
+  router.get('/bookings/:bookingId/completion-otp', requireShopperRole, requirePermission('booking.read.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
+    try { sendSuccess(res, await bookingSvc.getCompletionOtp(customerId, req.params.bookingId)); }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
+
+  router.post('/bookings/:bookingId/completion-confirmation', requireShopperRole, requirePermission('booking.write.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
+    try { sendSuccess(res, await bookingSvc.confirmCompletion(customerId, req.params.bookingId, req.body?.accept !== false, req.body?.reason)); }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
+
+  router.post('/bookings/:bookingId/disputes', requireShopperRole, requirePermission('booking.write.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
+    try { sendCreated(res, await bookingSvc.openDispute(customerId, req.params.bookingId, String(req.body?.reason || ''), Array.isArray(req.body?.photoUrls) ? req.body.photoUrls : [])); }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
+
+  router.patch('/bookings/admin/:bookingId/dispute', requireShopperRole, requirePermission('booking.write.self'), async (req: Request, res: Response) => {
+    const roles = ((req as any).auth?.realm_access?.roles || []).map((r: string) => String(r).toUpperCase());
+    if (!roles.includes('ADMIN')) return sendForbidden(res, 'Admin access required');
+    try { sendSuccess(res, await bookingSvc.resolveDisputeForAdmin(req.params.bookingId, String(req.body?.resolution || ''), String(req.body?.note || ''))); }
+    catch (e: any) { if (e.message === 'Booking not found' || e.message === 'Dispute not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
   router.post(
     '/bookings/:bookingId/cancel',
     requireShopperRole,

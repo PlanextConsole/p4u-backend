@@ -24,6 +24,7 @@ import { PutVendorDropshippingSettingsDto, PatchDropshippingOrderStatusDto } fro
 import { vendorImageUpload } from '../config/vendorImageUpload';
 import { createVendorMediaUpload, vendorMediaPublicUrl } from '../config/vendorMediaUpload';
 import { vendorDocumentUpload, vendorDocumentPublicUrl } from '../config/vendorDocumentUpload';
+import { VendorSupportService } from '../service/vendorSupport.service';
 
 const parsePaging = (req: Request) => {
   const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
@@ -56,6 +57,7 @@ export function createVendorRoutes(): Router {
   const mediaSvc = new VendorMediaService();
   const dropshipSvc = new VendorDropshippingService();
   const bookingSvc = new VendorBookingsService();
+  const supportSvc = new VendorSupportService();
 
   router.get('/public/health', (_req: Request, res: Response) => {
     sendSuccess(res, {
@@ -287,6 +289,18 @@ export function createVendorRoutes(): Router {
   router.patch('/orders/individual/:orderId', ...orderWrite, patchOrderHandler);
   router.patch('/orders/:orderId', ...orderWrite, patchOrderHandler);
 
+  router.patch('/orders/:orderId/return', ...orderWrite, async (req: Request, res: Response) => {
+    const vendorId = await requireVendorId(req, res, svc);
+    if (!vendorId) return;
+    try {
+      const row = await svc.updateReturnForVendor(req.params.orderId, vendorId, String(req.body?.action || ''), req.body?.note);
+      sendSuccess(res, row);
+    } catch (e: any) {
+      if (e.message === 'Order not found' || e.message === 'Return request not found') return sendNotFound(res, e.message);
+      sendBadRequest(res, e.message);
+    }
+  });
+
   const bookingRead = [requirePermission('vendor.portal.booking.read')];
   const bookingWrite = [requirePermission('vendor.portal.booking.write')];
 
@@ -320,6 +334,18 @@ export function createVendorRoutes(): Router {
   );
 
   router.get('/bookings/:bookingId', ...bookingRead, getBooking);
+
+  router.post('/bookings/:bookingId/completion-proof', ...bookingWrite, async (req: Request, res: Response) => {
+    const vendorId = await requireVendorId(req, res, svc); if (!vendorId) return;
+    try { sendSuccess(res, await bookingSvc.submitCompletionProof(vendorId, req.params.bookingId, req.body || {})); }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
+
+  router.post('/bookings/:bookingId/completion-otp', ...bookingWrite, async (req: Request, res: Response) => {
+    const vendorId = await requireVendorId(req, res, svc); if (!vendorId) return;
+    try { sendSuccess(res, await bookingSvc.verifyCompletionOtp(vendorId, req.params.bookingId, String(req.body?.otp || ''))); }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
 
   router.patch(
     '/bookings/:bookingId',
@@ -1174,5 +1200,10 @@ export function createVendorRoutes(): Router {
     },
   );
 
+  router.get('/support/tickets', requirePermission('vendor.portal.me.read'), async(req:Request,res:Response)=>{const id=await requireVendorId(req,res,svc);if(!id)return;sendSuccess(res,await supportSvc.list(id));});
+  router.post('/support/tickets', requirePermission('vendor.portal.me.write'), async(req:Request,res:Response)=>{const id=await requireVendorId(req,res,svc);if(!id)return;try{sendCreated(res,await supportSvc.create(id,req.body||{}));}catch(e:any){sendBadRequest(res,e.message);}});
+  router.get('/support/tickets/:id', requirePermission('vendor.portal.me.read'), async(req:Request,res:Response)=>{const id=await requireVendorId(req,res,svc);if(!id)return;try{sendSuccess(res,await supportSvc.get(id,req.params.id));}catch(e:any){sendNotFound(res,e.message);}});
+  router.post('/support/tickets/:id/messages', requirePermission('vendor.portal.me.write'), async(req:Request,res:Response)=>{const id=await requireVendorId(req,res,svc);if(!id)return;try{sendCreated(res,await supportSvc.message(id,req.params.id,req.body||{}));}catch(e:any){e.message.includes('not found')?sendNotFound(res,e.message):sendBadRequest(res,e.message);}});
+  router.patch('/support/tickets/:id/close', requirePermission('vendor.portal.me.write'), async(req:Request,res:Response)=>{const id=await requireVendorId(req,res,svc);if(!id)return;try{sendSuccess(res,await supportSvc.close(id,req.params.id));}catch(e:any){sendNotFound(res,e.message);}});
   return router;
 }

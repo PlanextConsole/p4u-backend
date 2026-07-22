@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Booking } from '../entities/Booking';
@@ -26,6 +26,16 @@ function extractDurationMinutesFromServiceMeta(meta: Record<string, unknown> | n
   return null;
 }
 
+function bookingMeta(row: Booking): Record<string, any> {
+  return row.metadata && typeof row.metadata === 'object' ? { ...row.metadata } : {};
+}
+
+function completionOtp(bookingId: string, nonce: string): string {
+  const secret = process.env.SERVICE_COMPLETION_OTP_SECRET;
+  if (!secret) throw new Error('Service completion OTP secret is not configured');
+  const hex = createHmac('sha256', secret).update(`${bookingId}:${nonce}`).digest('hex').slice(0, 12);
+  return String(parseInt(hex, 16) % 1000000).padStart(6, '0');
+}
 export class BookingService {
   private repo = AppDataSource.getRepository(Booking);
   private readonly approvableStatuses = new Set(['pending']);
@@ -153,6 +163,71 @@ export class BookingService {
     return { items, total, limit, offset };
   }
 
+  async getCompletionOtp(customerId: string, bookingId: string) {
+    const row = await this.repo.findOne({ where: { id: bookingId, customerId } });
+    if (!row) throw new Error('Booking not found');
+    const proof = bookingMeta(row).completionProof as Record<string, any> | undefined;
+    if (!proof?.otpNonce || row.status !== 'completion_pending') throw new Error('Completion OTP is not available');
+    if (Date.now() > new Date(proof.otpExpiresAt).getTime()) throw new Error('Completion OTP has expired');
+    return { bookingId, otp: completionOtp(bookingId, String(proof.otpNonce)), expiresAt: proof.otpExpiresAt };
+  }
+
+  async confirmCompletion(customerId: string, bookingId: string, accept: boolean, reason?: string) {
+    return AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({ where: { id: bookingId, customerId }, lock: { mode: 'pessimistic_write' } });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row);
+      const proof = { ...(meta.completionProof || {}) } as Record<string, any>;
+      if (accept && row.status === 'completed' && proof.customerConfirmedAt) return { ...row, duplicate: true };
+      if (row.status !== 'completion_pending_confirmation') throw new Error('Vendor OTP verification is required before confirmation');
+      const now = new Date().toISOString();
+      if (accept) {
+        proof.status = 'customer_confirmed'; proof.customerConfirmedAt = now; row.status = 'completed';
+      } else {
+        const detail = String(reason || '').trim();
+        if (detail.length < 5) throw new Error('Dispute reason must contain at least 5 characters');
+        proof.status = 'customer_disputed';
+        meta.dispute = { id: randomUUID(), status: 'open', reason: detail, openedAt: now, openedBy: 'customer' };
+        row.status = 'disputed';
+      }
+      row.metadata = { ...meta, completionProof: proof };
+      return repo.save(row);
+    });
+  }
+
+  async openDispute(customerId: string, bookingId: string, reason: string, photoUrls: string[] = []) {
+    return AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({ where: { id: bookingId, customerId }, lock: { mode: 'pessimistic_write' } });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row);
+      if (meta.dispute && String(meta.dispute.status) === 'open') return { ...meta.dispute, duplicate: true };
+      if (!['completed', 'completion_pending_confirmation'].includes(row.status)) throw new Error('Only completed services can be disputed');
+      const detail = String(reason || '').trim();
+      if (detail.length < 5) throw new Error('Dispute reason must contain at least 5 characters');
+      const completedAt = new Date((meta.completionProof as any)?.customerConfirmedAt ?? row.updatedAt).getTime();
+      if (Date.now() > completedAt + 7 * 86400000) throw new Error('Dispute window has expired');
+      const dispute = { id: randomUUID(), status: 'open', reason: detail, photoUrls: photoUrls.map(String).slice(0, 5), openedAt: new Date().toISOString(), openedBy: 'customer' };
+      row.status = 'disputed'; row.metadata = { ...meta, dispute };
+      await repo.save(row); return dispute;
+    });
+  }
+
+  async resolveDisputeForAdmin(bookingId: string, resolution: string, note: string) {
+    return AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({ where: { id: bookingId }, lock: { mode: 'pessimistic_write' } });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row); const dispute = { ...(meta.dispute || {}) } as Record<string, any>;
+      if (!dispute.id) throw new Error('Dispute not found');
+      if (dispute.status === 'resolved') return { ...row, duplicate: true };
+      if (!['customer', 'vendor'].includes(resolution)) throw new Error('Resolution must be customer or vendor');
+      dispute.status = 'resolved'; dispute.resolution = resolution; dispute.note = String(note || '').trim(); dispute.resolvedAt = new Date().toISOString();
+      row.status = resolution === 'vendor' ? 'completed' : 'dispute_resolved'; row.metadata = { ...meta, dispute };
+      return repo.save(row);
+    });
+  }
   async cancelBooking(customerId: string, bookingId: string): Promise<Booking> {
     const row = await this.repo.findOne({ where: { id: bookingId, customerId } });
     if (!row) throw new Error('Booking not found');

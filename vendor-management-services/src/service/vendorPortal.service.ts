@@ -114,32 +114,79 @@ export class VendorPortalService {
   }
 
   async updateOrderForVendor(orderId: string, vendorId: string, dto: PatchVendorOrderDto): Promise<Order> {
-    const repo = AppDataSource.getRepository(Order);
-    const row = await this.getOrderForVendor(orderId, vendorId);
-    if (!row) throw new Error('Order not found');
-    const prevStatus = row.status;
-    if (dto.customerId !== undefined) row.customerId = dto.customerId;
-    if (dto.orderRef !== undefined) row.orderRef = dto.orderRef;
-    if (dto.status !== undefined) row.status = dto.status;
-    if (dto.totalAmount !== undefined) row.totalAmount = dto.totalAmount;
-    if (dto.metadata !== undefined) row.metadata = dto.metadata;
-    const saved = await repo.save(row);
-    if (dto.status !== undefined && dto.status !== prevStatus) {
-      const meta = metaRecord(saved.metadata);
-      const displayId =
-        (typeof meta.displayId === 'string' && meta.displayId) ||
-        saved.orderRef ||
-        saved.id.slice(0, 8).toUpperCase();
-      void this.notifier.notifyVendorById(vendorId, {
-        type: 'order',
-        title: `Order ${displayId} updated`,
-        body: `Status is now ${saved.status}.`,
-        deepLink: '/dashboard/product/orders',
-      });
+    const saved = await AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Order);
+      const row = await repo.findOne({ where: { id: orderId }, lock: { mode: 'pessimistic_write' } });
+      if (!row || row.vendorId !== vendorId) throw new Error('Order not found');
+      const prevStatus = String(row.status || 'created').toLowerCase();
+      const nextStatus = dto.status === undefined ? prevStatus : String(dto.status).toLowerCase();
+      if (['completed', 'cancelled', 'refunded', 'returned'].includes(prevStatus) && nextStatus !== prevStatus) {
+        throw new Error(`Order cannot be changed from terminal status ${prevStatus}`);
+      }
+      const allowedStatuses = new Set(['placed', 'created', 'pending', 'paid', 'accepted', 'in_progress', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'completed', 'cancelled']);
+      if (!allowedStatuses.has(nextStatus)) throw new Error(`Unsupported order status ${nextStatus}`);
+      const previousMeta = metaRecord(row.metadata);
+      const suppliedMeta = metaRecord(dto.metadata);
+      const nextMeta: Record<string, unknown> = { ...previousMeta, ...suppliedMeta };
+      if (nextStatus === 'shipped' && prevStatus !== 'shipped') {
+        const shippingType = String(nextMeta.shipping_type ?? nextMeta.shippingType ?? '').trim().toLowerCase();
+        if (!['own', 'courier'].includes(shippingType)) throw new Error('Shipping type must be own or courier');
+        if (shippingType === 'courier') {
+          if (!String(nextMeta.courier_name ?? nextMeta.courierName ?? '').trim()) throw new Error('Courier name is required');
+          if (!String(nextMeta.tracking_number ?? nextMeta.trackingNumber ?? '').trim()) throw new Error('Tracking number is required');
+        }
+        nextMeta.shipping_type = shippingType;
+        nextMeta.shippedAt = nextMeta.shippedAt ?? new Date().toISOString();
+      }
+      if (nextStatus === 'delivered' && prevStatus !== 'delivered') nextMeta.deliveredAt = nextMeta.deliveredAt ?? new Date().toISOString();
+      if (nextStatus !== prevStatus) {
+        const statusHistory = Array.isArray(nextMeta.productStatusHistory) ? [...nextMeta.productStatusHistory] : [];
+        statusHistory.push({ status: nextStatus, at: new Date().toISOString(), actor: 'vendor' });
+        nextMeta.productStatusHistory = statusHistory;
+      }
+      row.status = nextStatus;
+      row.metadata = nextMeta;
+      return repo.save(row);
+    });
+    if (dto.status !== undefined && dto.status !== saved.status) {
+      // Normalisation only; notifications are emitted below for actual changes.
     }
+    const meta = metaRecord(saved.metadata);
+    const displayId = (typeof meta.displayId === 'string' && meta.displayId) || saved.orderRef || saved.id.slice(0, 8).toUpperCase();
+    void this.notifier.notifyVendorById(vendorId, {
+      type: 'order', title: `Order ${displayId} updated`, body: `Status is now ${saved.status}.`, deepLink: '/dashboard/product/orders',
+    }).catch(() => undefined);
     return enrichOrderForVendorPortal(saved);
   }
 
+  async updateReturnForVendor(orderId: string, vendorId: string, action: string, note?: string): Promise<Order> {
+    const normalized = String(action || '').trim().toLowerCase();
+    if (!['approve', 'reject', 'received'].includes(normalized)) throw new Error('Return action must be approve, reject, or received');
+    const saved = await AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Order);
+      const row = await repo.findOne({ where: { id: orderId }, lock: { mode: 'pessimistic_write' } });
+      if (!row || row.vendorId !== vendorId) throw new Error('Order not found');
+      const meta = metaRecord(row.metadata);
+      const request = metaRecord(meta.returnRequest);
+      if (!request.id) throw new Error('Return request not found');
+      const current = String(request.status || 'requested');
+      if (normalized === 'approve' && current === 'approved') return row;
+      if (normalized === 'reject' && current === 'rejected') return row;
+      if (normalized === 'received' && current === 'received') return row;
+      if (normalized !== 'received' && current !== 'requested') throw new Error(`Return cannot be ${normalized}d from ${current}`);
+      if (normalized === 'received' && current !== 'approved') throw new Error('Return must be approved before it can be received');
+      const now = new Date().toISOString();
+      request.status = normalized === 'approve' ? 'approved' : normalized === 'reject' ? 'rejected' : 'received';
+      request.vendorNote = String(note || '').trim() || null;
+      request.vendorUpdatedAt = now;
+      const statusHistory = Array.isArray(meta.productStatusHistory) ? [...meta.productStatusHistory] : [];
+      statusHistory.push({ status: `return_${request.status}`, at: now, actor: 'vendor', note: request.vendorNote });
+      row.status = normalized === 'reject' ? 'delivered' : normalized === 'approve' ? 'return_approved' : 'returned';
+      row.metadata = { ...meta, returnRequest: request, productStatusHistory: statusHistory };
+      return repo.save(row);
+    });
+    return enrichOrderForVendorPortal(saved);
+  }
   async listOrganizationOrders(vendorId: string, limit: number, offset: number) {
     const repo = AppDataSource.getRepository(OrganizationOrder);
     const [items, total] = await repo.findAndCount({

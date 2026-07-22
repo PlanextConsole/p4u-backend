@@ -16,6 +16,14 @@ import { ProductCategory } from '../entities/ProductCategory';
 import { RewardPointsLedger } from '../entities/RewardPointsLedger';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { CustomerReferral } from '../entities/CustomerReferral';
+import { FoodMenuCategory } from '../entities/FoodMenuCategory';
+import { FoodMenuItem } from '../entities/FoodMenuItem';
+import { FoodOrder } from '../entities/FoodOrder';
+import { FoodOrderChat } from '../entities/FoodOrderChat';
+import { FoodOrderStatusHistory } from '../entities/FoodOrderStatusHistory';
+import { FoodRestaurant } from '../entities/FoodRestaurant';
+import { FoodReview } from '../entities/FoodReview';
+import { PropertyListing } from '../entities/PropertyListing';
 
 export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
   const dbType = value.toLowerCase();
@@ -50,6 +58,14 @@ export const AppDataSource = new DataSource({
     RewardPointsLedger,
     CatalogServiceItem,
     CustomerReferral,
+    FoodRestaurant,
+    FoodMenuCategory,
+    FoodMenuItem,
+    FoodOrder,
+    FoodOrderStatusHistory,
+    FoodOrderChat,
+    FoodReview,
+    PropertyListing,
   ],
   synchronize: false,
   logging: process.env.NODE_ENV === 'development',

@@ -15,11 +15,18 @@ export function createNotificationRoutes(): Router {
     });
   });
 
+  router.post('/internal/send', async (req: Request, res: Response) => {
+    const expected = process.env.INTERNAL_API_KEY || '';
+    if (!expected || req.header('x-internal-api-key') !== expected) return res.status(401).json({ success: false, message: 'Invalid internal API key' });
+    const { userId, title, body, deepLink, data } = req.body ?? {};
+    if (!userId || !title) return sendBadRequest(res, 'userId and title are required');
+    sendCreated(res, await svc.send({ userId: String(userId), title: String(title), body: body ? String(body) : undefined, deepLink: deepLink ? String(deepLink) : undefined, data }));
+  });
   router.use(jwtAuth);
 
   router.get(
     '/me',
-    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR', 'RIDER']),
     requirePermission('notification.read.self'),
     async (req: Request, res: Response) => {
       const auth = (req as any).auth;
@@ -32,7 +39,7 @@ export function createNotificationRoutes(): Router {
 
   router.post(
     '/me/:id/read',
-    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR', 'RIDER']),
     requirePermission('notification.read.self'),
     async (req: Request, res: Response) => {
       const auth = (req as any).auth;
@@ -46,7 +53,7 @@ export function createNotificationRoutes(): Router {
 
   router.post(
     '/devices/register',
-    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR', 'RIDER']),
     requirePermission('notification.device.register'),
     async (req: Request, res: Response) => {
       const auth = (req as any).auth;

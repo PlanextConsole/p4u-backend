@@ -27,7 +27,7 @@ export class SocialMedia {
   storagePath!: string | null;
 
   /** Legacy blob — migrated to disk on startup; new rows leave this null. */
-  @Column({ type: 'bytea', nullable: true })
+  @Column({ type: ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres' ? 'bytea' : 'longblob') as 'bytea' | 'longblob', nullable: true })
   data!: Buffer | null;
 
   @Column({ name: 'owner_id', type: 'varchar', length: 128 })

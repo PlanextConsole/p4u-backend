@@ -7,6 +7,7 @@ import { InteractionService } from './interaction.service';
 import { SocioSettingsService } from './socioSettings.service';
 import { resolveAuthor, resolveAuthorMap } from './authorProfile.service';
 import { normalizeMediaUrl } from '../util/normalizeMediaUrl';
+import { sendSocialPush } from './notificationClient.service';
 
 function pairIds(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
@@ -224,6 +225,7 @@ export class MessageService {
     await stateRepo.save(recipientState);
 
     const author = await resolveAuthor(userId);
+    void sendSocialPush(otherId, author.userName, preview || 'New message', '/socio?conversation=' + encodeURIComponent(conversationId), { type: 'social_message', conversationId, senderId: userId });
     return {
       id: saved.id,
       conversationId,

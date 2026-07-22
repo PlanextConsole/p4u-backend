@@ -1,4 +1,4 @@
-﻿import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
 import { createVendorRoutes } from './routes/vendor.routes';
@@ -10,6 +10,7 @@ import { repairVendorCatalogModerationSchema } from './config/repairVendorCatalo
 import { repairVendorBookingAvailabilitySchema } from './config/repairVendorBookingAvailability';
 import { repairVendorMediaSchema } from './config/repairVendorMediaSchema';
 import { repairVendorDropshippingSchema } from './config/repairVendorDropshippingSchema';
+import { ensureSupportSchema } from './config/ensureSupportSchema';
 
 dotenv.config();
 
@@ -58,6 +59,7 @@ async function startServer() {
     console.log('Vendor portal DB connected');
     // Needs initialized DataSource for Postgres ADD COLUMN IF NOT EXISTS.
     await repairVendorBookingAvailabilitySchema();
+    await ensureSupportSchema();
 
     app.listen(PORT, async () => {
       console.log(`Vendor Portal Service http://localhost:${PORT}`);

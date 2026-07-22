@@ -67,5 +67,10 @@ export function createPaymentRoutes(): Router {
     }
   );
 
+  router.post('/refunds', requireAnyRole(['ADMIN']), requirePermission('payment.refund.create'), async (req: Request, res: Response) => {
+    const { orderId, amount, reason } = req.body ?? {};
+    if (!orderId || !amount) return sendBadRequest(res, 'orderId and amount are required');
+    sendCreated(res, await svc.refundPayment({ orderId: String(orderId), amount: String(amount), reason: reason ? String(reason) : undefined }));
+  });
   return router;
 }

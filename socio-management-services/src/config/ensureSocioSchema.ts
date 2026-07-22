@@ -54,4 +54,21 @@ export async function ensureSocioSchema(): Promise<void> {
       KEY idx_social_conv_state_user (user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-}
+
+  await AppDataSource.query(`CREATE TABLE IF NOT EXISTS social_calls (
+    id CHAR(36) NOT NULL PRIMARY KEY, conversation_id CHAR(36) NOT NULL,
+    caller_id VARCHAR(128) NOT NULL, callee_id VARCHAR(128) NOT NULL,
+    call_type VARCHAR(12) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'ringing',
+    idempotency_key VARCHAR(80) NOT NULL, offer_sdp LONGTEXT NULL, answer_sdp LONGTEXT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), accepted_at DATETIME(6) NULL,
+    ended_at DATETIME(6) NULL, expires_at DATETIME(6) NOT NULL,
+    UNIQUE KEY uq_social_call_idempotency (caller_id,idempotency_key),
+    KEY idx_social_call_callee (callee_id,status,created_at), KEY idx_social_call_conversation (conversation_id,created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  await AppDataSource.query(`CREATE TABLE IF NOT EXISTS social_call_signals (
+    sequence_no BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, id CHAR(36) NOT NULL UNIQUE,
+    call_id CHAR(36) NOT NULL, sender_id VARCHAR(128) NOT NULL, signal_type VARCHAR(20) NOT NULL,
+    payload_json JSON NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_social_call_signal (call_id,sequence_no),
+    CONSTRAINT fk_social_call_signal FOREIGN KEY(call_id) REFERENCES social_calls(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);}

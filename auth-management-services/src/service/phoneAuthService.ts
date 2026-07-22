@@ -91,6 +91,14 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
     'content.read.public',
     'content.newsletter.subscribe',
   ],
+  RIDER: [
+    'food.rider.profile.read',
+    'food.rider.profile.write',
+    'food.rider.order.read',
+    'food.rider.order.write',
+    'notification.read.self',
+    'notification.device.write.self',
+  ],
 };
 
 export interface PhoneExchangeResult {
@@ -103,7 +111,7 @@ export interface PhoneExchangeResult {
   /** Present when loggedIn === false (new user) — FE posts this back with the registration form. */
   registrationToken?: string;
   /** Hint for the FE: which form to show. */
-  intendedRole?: 'CUSTOMER' | 'VENDOR';
+  intendedRole?: 'CUSTOMER' | 'VENDOR' | 'RIDER';
 }
 
 export interface CustomerRegistrationPayload {
@@ -223,11 +231,31 @@ export class PhoneAuthService {
    */
   async phoneExchange(
     firebaseIdToken: string,
-    intendedRole: 'CUSTOMER' | 'VENDOR',
+    intendedRole: 'CUSTOMER' | 'VENDOR' | 'RIDER',
   ): Promise<PhoneExchangeResult> {
     await this.ensureKcAdmin();
     const claims = await verifyPhoneIdToken(firebaseIdToken);
     const phone = claims.phoneNumber; // E.164
+
+    // Riders are provisioned and approved by an administrator. OTP proves
+    // possession of the phone, but never creates a rider account.
+    if (intendedRole === 'RIDER') {
+      const digits = phone.replace(/\D/g, '');
+      const candidates = [digits, digits.slice(-10), phone];
+      let rider: { id?: string } | undefined;
+      for (const username of candidates) {
+        const matches = await this.keycloakAdmin.users.find({ username, exact: true });
+        rider = matches.find((item) => Boolean(item.id));
+        if (rider) break;
+      }
+      if (!rider?.id) throw new Error('No approved rider account is linked to this phone number.');
+      const roles = await this.keycloakAdmin.users.listRealmRoleMappings({ id: rider.id });
+      if (!roles.some((role) => String(role.name || '').toUpperCase() === 'RIDER')) {
+        throw new Error('This phone number is not approved for rider access.');
+      }
+      const auth = await this.loginAsKeycloakUser(rider.id);
+      return { loggedIn: true, phone, auth, intendedRole };
+    }
 
     // 1) Customer claim: existing customer_profiles row already linked to a
     //    Keycloak user → just mint tokens for that user.
