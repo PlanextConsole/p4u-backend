@@ -20,6 +20,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD || 'root@123',
   database: process.env.DB_NAME || 'p4u_admin_db',
   entities: [Banner, PopupBanner, ClassifiedProduct, ClassifiedCategory, Post, WebsiteQuery, Brand, FeaturedProduct, ServiceHighlight],
-  synchronize: process.env.NODE_ENV !== 'production',
+  // Never auto-alter production schemas (entity PK changes must not run ALTER TABLE).
+  synchronize: false,
   logging: process.env.NODE_ENV === 'development',
 });
