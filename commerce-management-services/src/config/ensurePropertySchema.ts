@@ -1,20 +1,31 @@
 import { AppDataSource } from './database';
 
-function asBool(value: unknown): boolean {
-  return value === true || value === 't' || value === 'true' || value === 1;
+function asNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return parseInt(value, 10) || 0;
+  return 0;
 }
 
 async function columnExists(table: string, column: string): Promise<boolean> {
-  const rows: Array<{ exists: unknown }> = await AppDataSource.query(
-    `SELECT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_schema = current_schema()
-        AND table_name = $1
-        AND column_name = $2
-    ) AS exists`,
+  const rows: Array<{ cnt: unknown }> = await AppDataSource.query(
+    `SELECT COUNT(*)::int AS cnt
+     FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = $1
+       AND column_name = $2`,
     [table, column],
   );
-  return asBool(rows[0]?.exists);
+  return asNumber(rows[0]?.cnt) > 0;
+}
+
+async function runIgnorable(sql: string): Promise<void> {
+  try {
+    await AppDataSource.query(sql);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already exists|duplicate/i.test(message)) return;
+    throw error;
+  }
 }
 
 export async function ensurePropertySchema() {
@@ -42,15 +53,15 @@ export async function ensurePropertySchema() {
   `);
 
   if (!(await columnExists('homes_property_listings', 'customer_id'))) {
-    await AppDataSource.query(
-      `ALTER TABLE homes_property_listings ADD COLUMN customer_id varchar(36) NULL`,
+    await runIgnorable(
+      `ALTER TABLE homes_property_listings ADD COLUMN IF NOT EXISTS customer_id varchar(36) NULL`,
     );
   }
 
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_homes_properties_customer ON homes_property_listings (customer_id)`,
   );
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_homes_properties_status ON homes_property_listings (moderation_status)`,
   );
 
@@ -65,13 +76,13 @@ export async function ensurePropertySchema() {
       created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_property_inquiry_property ON property_inquiries (property_id)`,
   );
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_property_inquiry_owner ON property_inquiries (owner_id)`,
   );
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_property_inquiry_sender ON property_inquiries (sender_id)`,
   );
 
@@ -85,7 +96,7 @@ export async function ensurePropertySchema() {
       created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_property_search_customer ON property_saved_searches (customer_id)`,
   );
 
@@ -99,7 +110,7 @@ export async function ensurePropertySchema() {
       updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_property_rent_customer ON property_rent_trackers (customer_id)`,
   );
 }

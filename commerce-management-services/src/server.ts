@@ -58,8 +58,22 @@ async function startServer() {
     console.log('Commerce DB connected');
     await repairCartVariationSchema();
     await ensureFoodSchema();
-    await ensurePropertySchema();
-    await ensureSupportSchema();
+    try {
+      await ensurePropertySchema();
+    } catch (error) {
+      console.warn(
+        '[commerce-service] property schema ensure skipped:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+    try {
+      await ensureSupportSchema();
+    } catch (error) {
+      console.warn(
+        '[commerce-service] support schema ensure skipped:',
+        error instanceof Error ? error.message : error,
+      );
+    }
 
     app.listen(PORT, async () => {
       console.log(`Commerce Service http://localhost:${PORT}`);

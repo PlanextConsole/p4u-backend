@@ -1,5 +1,15 @@
 import { AppDataSource } from './database';
 
+async function runIgnorable(sql: string): Promise<void> {
+  try {
+    await AppDataSource.query(sql);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already exists|duplicate/i.test(message)) return;
+    throw error;
+  }
+}
+
 export async function ensureSupportSchema() {
   await AppDataSource.query(`
     CREATE TABLE IF NOT EXISTS support_tickets (
@@ -17,10 +27,10 @@ export async function ensureSupportSchema() {
       metadata json NULL
     )
   `);
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_support_requester ON support_tickets (requester_type, requester_id)`,
   );
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_support_status ON support_tickets (status, updated_at)`,
   );
 
@@ -37,7 +47,7 @@ export async function ensureSupportSchema() {
         REFERENCES support_tickets(id) ON DELETE CASCADE
     )
   `);
-  await AppDataSource.query(
+  await runIgnorable(
     `CREATE INDEX IF NOT EXISTS IDX_support_message_ticket ON support_ticket_messages (ticket_id, created_at)`,
   );
 }
