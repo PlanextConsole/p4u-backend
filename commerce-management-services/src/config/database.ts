@@ -25,20 +25,17 @@ import { FoodRestaurant } from '../entities/FoodRestaurant';
 import { FoodReview } from '../entities/FoodReview';
 import { PropertyListing } from '../entities/PropertyListing';
 
-export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
+export function isPostgresDbType(value = process.env.DB_TYPE || 'postgres'): boolean {
   const dbType = value.toLowerCase();
   return dbType === 'postgres' || dbType === 'postgresql';
 }
 
-const dbType = isPostgresDbType() ? 'postgres' : 'mysql';
-const defaultPort = dbType === 'postgres' ? '5432' : '3306';
-
 export const AppDataSource = new DataSource({
-  type: dbType,
+  type: 'postgres',
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || defaultPort, 10),
-  username: process.env.DB_USERNAME || 'root',
-  password: process.env.DB_PASSWORD || 'root@123',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  username: process.env.DB_USERNAME || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'p4u_admin_db',
   entities: [
     Order,
