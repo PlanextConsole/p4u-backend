@@ -59,7 +59,14 @@ async function startServer() {
     console.log('Vendor portal DB connected');
     // Needs initialized DataSource for Postgres ADD COLUMN IF NOT EXISTS.
     await repairVendorBookingAvailabilitySchema();
-    await ensureSupportSchema();
+    try {
+      await ensureSupportSchema();
+    } catch (error) {
+      console.warn(
+        '[vendor-service] support schema ensure skipped:',
+        error instanceof Error ? error.message : error,
+      );
+    }
 
     app.listen(PORT, async () => {
       console.log(`Vendor Portal Service http://localhost:${PORT}`);
