@@ -1,10 +1,17 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+
 
 /** Product subcategory: one level under a product category. */
 @Entity('product_subcategories')
 export class ProductSubcategory {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'product_category_id', type: 'varchar', length: 36 })
   @Index()

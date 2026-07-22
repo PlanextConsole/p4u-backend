@@ -1,19 +1,18 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  Index,
-  Unique,
-} from 'typeorm';
+import { randomUUID } from 'crypto';
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, Unique, UpdateDateColumn } from 'typeorm';
+
 
 /** Links a catalog vendor to a bookable service with per-vendor price (user Services tab / booking). */
 @Entity('catalog_vendor_services')
 @Unique(['vendorId', 'serviceId'])
 export class VendorService {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'vendor_id', type: 'varchar', length: 36 })
   @Index()

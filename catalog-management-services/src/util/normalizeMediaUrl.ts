@@ -11,6 +11,14 @@ export function normalizeMediaUrl(url: string | null | undefined): string | null
       if (GATEWAY_PATH_PREFIXES.some((p) => parsed.pathname.startsWith(p))) {
         return `${parsed.pathname}${parsed.search}`;
       }
+      // Strip stale local hosts so clients rewrite onto the configured gateway.
+      if (
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '0.0.0.0'
+      ) {
+        return `${parsed.pathname}${parsed.search}` || null;
+      }
       return u;
     } catch {
       return u;

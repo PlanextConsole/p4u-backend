@@ -1,8 +1,15 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity({ name: 'food_coupons' })
 export class FoodCoupon {
-  @PrimaryGeneratedColumn('uuid') id!: string;
+  @PrimaryColumn({ type: 'varchar', length: 36 })
+  id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
   @Index({ unique: true }) @Column({ type: 'varchar', length: 60 }) code!: string;
   @Column({ type: 'varchar', length: 160 }) title!: string;
   @Column({ type: 'text', nullable: true }) description!: string | null;

@@ -1,17 +1,17 @@
-﻿import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  Index,
-} from 'typeorm';
+import { randomUUID } from 'crypto';
+﻿import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+
 
 /** Log of admin-initiated broadcast push attempts (FCM etc. can be wired later). */
 @Entity('admin_push_notification_sends')
 export class AdminPushNotificationSend {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'target_audience', type: 'varchar', length: 64 })
   @Index()

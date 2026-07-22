@@ -1,4 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn } from 'typeorm';
+
 
 /**
  * Socio post/story media metadata. File bytes live on disk under UPLOAD_DIR/media/{id}.ext;
@@ -6,8 +8,13 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 
  */
 @Entity('social_media')
 export class SocialMedia {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ type: 'varchar', length: 16, default: 'image' })
   @Index()

@@ -1,8 +1,15 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('customer_referrals')
 export class CustomerReferral {
-  @PrimaryGeneratedColumn('uuid') id!: string;
+  @PrimaryColumn({ type: 'varchar', length: 36 })
+  id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
   @Column({ name: 'referrer_customer_id', type: 'varchar', length: 36 }) @Index() referrerCustomerId!: string;
   @Column({ name: 'referred_customer_id', type: 'varchar', length: 36, unique: true }) referredCustomerId!: string;
   @Column({ name: 'referral_code', type: 'varchar', length: 64 }) referralCode!: string;

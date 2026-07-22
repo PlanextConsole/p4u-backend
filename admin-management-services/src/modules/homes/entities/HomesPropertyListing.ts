@@ -1,9 +1,24 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { randomUUID } from 'crypto';
+import {
+  BeforeInsert,
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 
 @Entity({ name: 'homes_property_listings' })
 export class HomesPropertyListing {
-  @PrimaryGeneratedColumn('uuid')
+  // Postgres uses varchar(36) PK with no DEFAULT — do not use @PrimaryGeneratedColumn('uuid').
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'title', type: 'varchar', length: 180 })
   title!: string;

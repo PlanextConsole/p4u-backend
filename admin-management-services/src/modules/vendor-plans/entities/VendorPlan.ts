@@ -1,11 +1,6 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  Index,
-} from 'typeorm';
+import { randomUUID } from 'crypto';
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+
 
 export type VendorPlanType = 'local' | 'vip';
 export type VendorPlanVisibility = 'radius' | 'city' | 'state' | 'country';
@@ -13,8 +8,13 @@ export type VendorPlanPaymentMode = 'both' | 'online' | 'offline';
 
 @Entity('vendor_plans')
 export class VendorPlan {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
+
+  @BeforeInsert()
+  ensureId() {
+    if (!this.id) this.id = randomUUID();
+  }
 
   @Column({ name: 'plan_name', type: 'varchar', length: 120 })
   @Index()
