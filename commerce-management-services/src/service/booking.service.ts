@@ -231,8 +231,12 @@ export class BookingService {
   async cancelBooking(customerId: string, bookingId: string): Promise<Booking> {
     const row = await this.repo.findOne({ where: { id: bookingId, customerId } });
     if (!row) throw new Error('Booking not found');
-    if (row.status === 'cancelled') throw new Error('Booking is already cancelled');
-    if (row.status === 'completed') throw new Error('Cannot cancel a completed booking');
+    const current = String(row.status || '').trim().toLowerCase();
+    if (current === 'cancelled' || current === 'canceled') throw new Error('Booking is already cancelled');
+    const cancellable = new Set(['pending', 'approved', 'confirmed', 'in_progress']);
+    if (!cancellable.has(current)) {
+      throw new Error('This booking can no longer be cancelled');
+    }
     row.status = 'cancelled';
     return this.repo.save(row);
   }

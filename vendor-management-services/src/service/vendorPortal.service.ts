@@ -120,11 +120,15 @@ export class VendorPortalService {
       if (!row || row.vendorId !== vendorId) throw new Error('Order not found');
       const prevStatus = String(row.status || 'created').toLowerCase();
       const nextStatus = dto.status === undefined ? prevStatus : String(dto.status).toLowerCase();
-      if (['completed', 'cancelled', 'refunded', 'returned'].includes(prevStatus) && nextStatus !== prevStatus) {
+      if (['delivered', 'completed', 'cancelled', 'canceled', 'refunded', 'returned'].includes(prevStatus) && nextStatus !== prevStatus) {
         throw new Error(`Order cannot be changed from terminal status ${prevStatus}`);
       }
       const allowedStatuses = new Set(['placed', 'created', 'pending', 'paid', 'accepted', 'in_progress', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'completed', 'cancelled']);
       if (!allowedStatuses.has(nextStatus)) throw new Error(`Unsupported order status ${nextStatus}`);
+      const cancellableStatuses = new Set(['created', 'placed', 'pending', 'paid', 'accepted', 'processing', 'in_progress', 'new']);
+      if (nextStatus === 'cancelled' && !cancellableStatuses.has(prevStatus)) {
+        throw new Error('This order can no longer be cancelled');
+      }
       const previousMeta = metaRecord(row.metadata);
       const suppliedMeta = metaRecord(dto.metadata);
       const nextMeta: Record<string, unknown> = { ...previousMeta, ...suppliedMeta };

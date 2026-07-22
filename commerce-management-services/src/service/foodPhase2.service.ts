@@ -461,6 +461,10 @@ export class FoodPhase2Service {
     if (!allowed.includes(status)) throw new Error('Unsupported administrative order status');
     const order = await AppDataSource.getRepository(FoodOrder).findOne({ where: { id: orderId } });
     if (!order) throw new Error('Food order not found');
+    const current = String(order.status || '').toLowerCase();
+    if ((status === 'cancelled' || status === 'rejected') && !['placed', 'accepted', 'preparing'].includes(current)) {
+      throw new Error('This order can no longer be cancelled');
+    }
     order.status = status;
     if (status === 'cancelled' || status === 'rejected') { order.cancelledAt = new Date(); order.cancellationReason = note || `Changed by administrator`; }
     await AppDataSource.transaction(async manager => {

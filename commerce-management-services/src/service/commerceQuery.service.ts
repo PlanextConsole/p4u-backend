@@ -41,11 +41,38 @@ export class CommerceQueryService {
     return saved;
   }
 
+  /** Early lifecycle statuses that customers (and non-admin cancel) may cancel from. */
+  static readonly CANCELLABLE_STATUSES = new Set([
+    'created',
+    'placed',
+    'pending',
+    'paid',
+    'accepted',
+    'processing',
+    'in_progress',
+    'new',
+  ]);
+
   async updateOrderStatus(orderId: string, status: string) {
     const repo = AppDataSource.getRepository(Order);
     const row = await repo.findOne({ where: { id: orderId } });
     if (!row) throw new Error('Order not found');
     row.status = status;
+    return repo.save(row);
+  }
+
+  async cancelCustomerOrder(orderId: string) {
+    const repo = AppDataSource.getRepository(Order);
+    const row = await repo.findOne({ where: { id: orderId } });
+    if (!row) throw new Error('Order not found');
+    const current = String(row.status || '').trim().toLowerCase();
+    if (current === 'cancelled' || current === 'canceled') {
+      throw new Error('Order is already cancelled');
+    }
+    if (!CommerceQueryService.CANCELLABLE_STATUSES.has(current)) {
+      throw new Error('This order can no longer be cancelled');
+    }
+    row.status = 'cancelled';
     return repo.save(row);
   }
 }

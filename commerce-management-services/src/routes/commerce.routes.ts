@@ -306,16 +306,23 @@ export function createCommerceRoutes(): Router {
     requireShopperRole,
     requirePermission('order.write.self'),
     async (req: Request, res: Response) => {
-      const row = await svc.getOrderById(req.params.orderId);
-      if (!row) return sendNotFound(res, 'Order not found');
-      const auth = (req as any).auth;
-      const isAdmin = (auth?.realm_access?.roles || []).map((r: string) => r.toUpperCase()).includes('ADMIN');
-      const tokenCustomerId = String(auth?.customer_id || auth?.sub || '');
-      if (!isAdmin && row.customerId !== tokenCustomerId) {
-        return sendForbidden(res, 'Forbidden: customer self access required');
+      try {
+        const row = await svc.getOrderById(req.params.orderId);
+        if (!row) return sendNotFound(res, 'Order not found');
+        const auth = (req as any).auth;
+        const isAdmin = (auth?.realm_access?.roles || []).map((r: string) => r.toUpperCase()).includes('ADMIN');
+        const tokenCustomerId = String(auth?.customer_id || auth?.sub || '');
+        if (!isAdmin && row.customerId !== tokenCustomerId) {
+          return sendForbidden(res, 'Forbidden: customer self access required');
+        }
+        // Customers cannot cancel after ship/delivery; admins use the same rule for consistency.
+        const updated = await svc.cancelCustomerOrder(req.params.orderId);
+        sendSuccess(res, updated);
+      } catch (e: any) {
+        const msg = e?.message || 'Unable to cancel order';
+        if (msg === 'Order not found') return sendNotFound(res, msg);
+        return sendBadRequest(res, msg);
       }
-      const updated = await svc.updateOrderStatus(req.params.orderId, 'cancelled');
-      sendSuccess(res, updated);
     }
   );
 

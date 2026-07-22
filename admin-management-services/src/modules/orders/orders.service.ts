@@ -78,6 +78,17 @@ export class OrdersAdminService {
     return row;
   }
 
+  private static readonly CANCELLABLE_STATUSES = new Set([
+    'created',
+    'placed',
+    'pending',
+    'paid',
+    'accepted',
+    'processing',
+    'in_progress',
+    'new',
+  ]);
+
   async updateOrder(id: string, dto: UpdateOrderDto, actorSub: string, ip: string | undefined): Promise<Order> {
     const repo = AppDataSource.getRepository(Order);
     const row = await repo.findOne({ where: { id } });
@@ -85,7 +96,18 @@ export class OrdersAdminService {
     if (dto.vendorId !== undefined) row.vendorId = dto.vendorId;
     if (dto.customerId !== undefined) row.customerId = dto.customerId;
     if (dto.orderRef !== undefined) row.orderRef = dto.orderRef;
-    if (dto.status !== undefined) row.status = dto.status;
+    if (dto.status !== undefined) {
+      const prev = String(row.status || '').trim().toLowerCase();
+      const next = String(dto.status).trim().toLowerCase();
+      if (
+        (next === 'cancelled' || next === 'canceled') &&
+        prev !== next &&
+        !OrdersAdminService.CANCELLABLE_STATUSES.has(prev)
+      ) {
+        throw new Error('This order can no longer be cancelled');
+      }
+      row.status = dto.status;
+    }
     if (dto.totalAmount !== undefined) row.totalAmount = dto.totalAmount;
     if (dto.metadata !== undefined) row.metadata = dto.metadata;
     await repo.save(row);
