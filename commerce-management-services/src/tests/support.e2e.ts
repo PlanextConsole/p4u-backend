@@ -17,5 +17,5 @@ async function main(){await AppDataSource.initialize();await ensureSupportSchema
   await expectReject(()=>svc.addMessage(ticketId,customer,'customer',{message:'This replay must be rejected'}),'cannot receive');
   const final:any=await svc.get(ticketId,admin,'admin');if(final.status!=='resolved'||!final.resolved_at)throw new Error('Resolution was not persisted');
   console.log(JSON.stringify({result:'PASS',ownerScoping:true,vendorIsolation:true,messageOrder:true,adminQueue:true,resolutionReplay:true,terminalReplyGuard:true}));
-}finally{if(ticketId)await AppDataSource.query('DELETE FROM support_tickets WHERE id=?',[ticketId]);await AppDataSource.destroy();}}
+}finally{if(ticketId)await AppDataSource.query('DELETE FROM support_tickets WHERE id=$1',[ticketId]);await AppDataSource.destroy();}}
 main().catch(e=>{console.error(e);process.exitCode=1;});

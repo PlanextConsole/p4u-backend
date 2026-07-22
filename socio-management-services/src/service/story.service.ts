@@ -119,6 +119,17 @@ export class StoryService {
     return repo.findOne({ where: { id: storyId } });
   }
 
+  async deleteStory(authorId: string, storyId: string) {
+    const repo = AppDataSource.getRepository(Story);
+    const story = await repo.findOne({ where: { id: storyId, authorId } });
+    if (!story) return null;
+
+    await repo.remove(story);
+    const mediaId = mediaIdFromUrl(story.mediaUrl);
+    if (mediaId) await deleteMediaByIds([mediaId]);
+    return { id: storyId, deleted: true };
+  }
+
   /**
    * Likes a story (idempotent per user via metadata.likedBy[]) and credits the user's wallet
    * with STORY_LIKE_POINTS. No separate StoryLike table — kept lightweight on the story metadata.

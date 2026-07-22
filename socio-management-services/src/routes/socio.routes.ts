@@ -501,6 +501,19 @@ export function createSocioRoutes(): Router {
     }
   );
 
+  router.delete(
+    '/stories/:storyId',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.post.write'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      const result = await storySvc.deleteStory(userId, req.params.storyId);
+      if (!result) return sendNotFound(res, 'Story not found or not owned by user');
+      sendSuccess(res, result);
+    }
+  );
+
   router.post(
     '/stories/:storyId/like',
     requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
