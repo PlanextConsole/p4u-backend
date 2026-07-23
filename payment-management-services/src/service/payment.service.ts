@@ -2,6 +2,7 @@ import { AppDataSource } from '../config/database';
 import { PaymentIntent } from '../entities/PaymentIntent';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import axios from 'axios';
 
 export class PaymentService {
   private readonly razorpay: Razorpay | null;
@@ -81,6 +82,39 @@ export class PaymentService {
       row.providerPaymentId = input.paymentId;
       row.providerSignature = input.signature;
       await repo.save(row);
+
+      const metadata = (row.metadata && typeof row.metadata === 'object' ? row.metadata : {}) as Record<string, any>;
+      const productOrderId = String(
+        metadata.productOrderId || (metadata.orderType === 'product' || metadata.domain === 'product' ? row.orderId : '') || '',
+      ).trim();
+      if (productOrderId) {
+        const secret =
+          process.env.PRODUCT_PAYMENT_WEBHOOK_SECRET || process.env.FOOD_PAYMENT_WEBHOOK_SECRET || '';
+        if (secret) {
+          const callback = JSON.stringify({
+            eventId: `verify_${row.id}`,
+            productOrderId,
+            providerOrderId: input.orderId,
+            providerPaymentId: input.paymentId,
+            status: 'success',
+          });
+          try {
+            await axios.post(
+              `${process.env.COMMERCE_SERVICE_URL || 'http://localhost:8086'}/api/v1/commerce/product-payments/webhook`,
+              callback,
+              {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-product-signature': crypto.createHmac('sha256', secret).update(callback).digest('hex'),
+                },
+                timeout: 15000,
+              },
+            );
+          } catch (error) {
+            console.error('[payment] product paid callback after verify failed:', error);
+          }
+        }
+      }
     }
     return { verified: true, intentId: row?.id ?? null };
   }

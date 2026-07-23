@@ -11,6 +11,7 @@ import {
 } from './platformVariable.reader';
 import { resolveCommissionPercent, resolveMaxRedemptionPercent } from './commissionResolver';
 import { getSpendablePointsBalance } from './rewardBalance';
+import { CouponService } from './coupon.service';
 
 export type CartLineForPricing = {
   productId: string;
@@ -44,6 +45,8 @@ export type CartPricingBreakdown = {
   currency: 'INR';
   itemSubtotal: string;
   discount: string;
+  couponCode: string | null;
+  couponId: string | null;
   pointsRedeemed: number;
   pointsRedeemedValue: string;
   platformFee: string;
@@ -82,15 +85,18 @@ export class PricingService {
   async priceCart(
     customerId: string,
     lines: CartLineForPricing[],
-    opts: { redeemPoints?: number } = {},
+    opts: { redeemPoints?: number; couponCode?: string; vendorId?: string; requireValidCoupon?: boolean } = {},
   ): Promise<CartPricingBreakdown> {
     const warnings: string[] = [];
+    const couponSvc = new CouponService();
 
     if (!lines.length) {
       return {
         currency: 'INR',
         itemSubtotal: '0.00',
         discount: '0.00',
+        couponCode: null,
+        couponId: null,
         pointsRedeemed: 0,
         pointsRedeemedValue: '0.00',
         platformFee: '0.00',
@@ -259,7 +265,28 @@ export class PricingService {
     const deliveryFee = deliveryFeeBase;
     const surgeCost = surgeCostBase;
     const productTax = 0;
-    const discount = 0;
+    let discount = 0;
+    let couponCode: string | null = null;
+    let couponId: string | null = null;
+    const requestedCoupon = String(opts.couponCode || '').trim();
+    if (requestedCoupon) {
+      const validation = await couponSvc.validateCoupon(
+        requestedCoupon,
+        customerId,
+        itemSubtotal,
+        opts.vendorId,
+      );
+      if (!validation.valid) {
+        if (opts.requireValidCoupon) {
+          throw new Error(validation.message || 'Invalid coupon');
+        }
+        warnings.push(validation.message || 'Coupon could not be applied');
+      } else {
+        discount = Number(validation.discount) || 0;
+        couponCode = requestedCoupon;
+        couponId = validation.couponId ?? null;
+      }
+    }
 
     const grandTotal =
       itemSubtotal -
@@ -280,6 +307,8 @@ export class PricingService {
       currency: 'INR',
       itemSubtotal: fmt(itemSubtotal),
       discount: fmt(discount),
+      couponCode,
+      couponId,
       pointsRedeemed,
       pointsRedeemedValue: fmt(pointsRedeemedValue),
       platformFee: fmt(platformFee),

@@ -11,6 +11,7 @@ import { Order } from '../entities/Order';
 import { Product } from '../entities/Product';
 import { CommerceQueryService } from './commerceQuery.service';
 import { PricingService, type CartPricingBreakdown } from './pricing.service';
+import { CouponService } from './coupon.service';
 
 export type CartLineInput = {
   productId: string;
@@ -53,7 +54,10 @@ export class CartService {
   private pricing = new PricingService();
 
   /** Returns a full pre-checkout breakdown without persisting anything. */
-  async quoteCart(customerId: string, opts: { redeemPoints?: number } = {}): Promise<CartPricingBreakdown & { cartId: string }> {
+  async quoteCart(
+    customerId: string,
+    opts: { redeemPoints?: number; couponCode?: string; vendorId?: string } = {},
+  ): Promise<CartPricingBreakdown & { cartId: string }> {
     const data = await this.getCartResponse(customerId);
     const breakdown = await this.pricing.priceCart(
       customerId,
@@ -242,11 +246,29 @@ export class CartService {
   async createOrderFromCart(
     customerId: string,
     vendorId?: string | null,
-    opts: { redeemPoints?: number } = {},
+    opts: {
+      redeemPoints?: number;
+      couponCode?: string;
+      addressId?: string;
+      shippingAddress?: Record<string, unknown> | null;
+      paymentMode?: string;
+    } = {},
   ): Promise<ReturnType<CommerceQueryService['createOrder']>> {
     const data = await this.getCartResponse(customerId);
     if (!data.items.length) {
       throw new Error('Cart is empty');
+    }
+
+    const addressId = String(opts.addressId || '').trim();
+    if (!addressId) {
+      throw new Error('Delivery address is required');
+    }
+    const shippingAddress =
+      opts.shippingAddress && typeof opts.shippingAddress === 'object'
+        ? opts.shippingAddress
+        : null;
+    if (!shippingAddress) {
+      throw new Error('Delivery address snapshot is required');
     }
 
     const breakdown = await this.pricing.priceCart(
@@ -258,7 +280,12 @@ export class CartService {
         unitPrice: i.unitPrice,
         metadata: i.metadata,
       })),
-      opts,
+      {
+        redeemPoints: opts.redeemPoints,
+        couponCode: opts.couponCode,
+        vendorId: vendorId ?? undefined,
+        requireValidCoupon: Boolean(String(opts.couponCode || '').trim()),
+      },
     );
 
     if (!breakdown.meetsMinCart) {
@@ -321,12 +348,13 @@ export class CartService {
     await queryRunner.startTransaction();
     try {
       const orderRepo = queryRunner.manager.getRepository(Order);
+      const paymentMode = String(opts.paymentMode || 'cod').trim().toLowerCase() || 'cod';
       const order = orderRepo.create({
         id: randomUUID(),
         customerId,
         vendorId: resolvedVendor,
         orderRef: `ORD-${Date.now()}`,
-        status: 'created',
+        status: paymentMode === 'cod' ? 'placed' : 'created',
         totalAmount: breakdown.grandTotal,
         metadata: {
           source: 'cart',
@@ -334,13 +362,28 @@ export class CartService {
           lines,
           multiVendor: vendorIds.size > 1,
           totals: breakdown,
-          // Business name(s) the pricing step already resolved — lets clients show
-          // the seller without a second lookup.
           vendorName: breakdown.vendors.find((v) => v.vendorName)?.vendorName ?? undefined,
+          addressId,
+          shippingAddress,
+          paymentMode,
+          paymentStatus: paymentMode === 'cod' ? 'cod' : 'pending',
+          couponCode: breakdown.couponCode,
+          couponId: breakdown.couponId,
           ...customerSnapshot,
         },
       });
       await orderRepo.save(order);
+
+      if (breakdown.couponId && Number(breakdown.discount) > 0) {
+        const couponSvc = new CouponService();
+        await couponSvc.recordUsage({
+          couponId: breakdown.couponId,
+          customerId,
+          orderId: order.id,
+          discountApplied: Number(breakdown.discount),
+          manager: queryRunner.manager,
+        });
+      }
 
       // One settlement row per vendor for the cash split.
       const settlementRepo = queryRunner.manager.getRepository(Settlement);

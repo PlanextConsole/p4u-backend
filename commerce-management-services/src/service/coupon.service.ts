@@ -1,6 +1,7 @@
 import { AppDataSource } from '../config/database';
 import { Coupon } from '../entities/Coupon';
 import { CouponUsage } from '../entities/CouponUsage';
+import type { EntityManager } from 'typeorm';
 
 export class CouponService {
   private couponRepo = AppDataSource.getRepository(Coupon);
@@ -61,5 +62,29 @@ export class CouponService {
       message: 'Coupon applied successfully',
       couponId: coupon.id,
     };
+  }
+
+  async recordUsage(params: {
+    couponId: string;
+    customerId: string;
+    orderId: string;
+    discountApplied: number;
+    manager?: EntityManager;
+  }): Promise<void> {
+    const manager = params.manager ?? AppDataSource.manager;
+    const couponRepo = manager.getRepository(Coupon);
+    const usageRepo = manager.getRepository(CouponUsage);
+    const coupon = await couponRepo.findOne({ where: { id: params.couponId } });
+    if (!coupon) throw new Error('Coupon not found while recording usage');
+    await usageRepo.save(
+      usageRepo.create({
+        couponId: params.couponId,
+        customerId: params.customerId,
+        orderId: params.orderId,
+        discountApplied: String(Math.round(params.discountApplied * 100) / 100),
+      }),
+    );
+    coupon.usedCount = Number(coupon.usedCount || 0) + 1;
+    await couponRepo.save(coupon);
   }
 }

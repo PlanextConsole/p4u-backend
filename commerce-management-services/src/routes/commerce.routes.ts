@@ -225,8 +225,21 @@ export function createCommerceRoutes(): Router {
       if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
       try {
         const redeemPoints = Number(req.body?.redeemPoints ?? 0);
+        const couponCode = String(req.body?.couponCode || req.body?.coupon || '').trim() || undefined;
+        const addressId = String(req.body?.addressId || '').trim();
+        const shippingAddress =
+          req.body?.shippingAddress && typeof req.body.shippingAddress === 'object'
+            ? req.body.shippingAddress
+            : req.body?.address && typeof req.body.address === 'object'
+              ? req.body.address
+              : null;
+        const paymentMode = String(req.body?.paymentMode || 'cod').trim() || 'cod';
         const order = await cartSvc.createOrderFromCart(customerId, req.body?.vendorId ?? undefined, {
           redeemPoints: Number.isFinite(redeemPoints) && redeemPoints > 0 ? redeemPoints : 0,
+          couponCode,
+          addressId,
+          shippingAddress,
+          paymentMode,
         });
         sendCreated(res, order);
       } catch (e: any) {
@@ -244,8 +257,11 @@ export function createCommerceRoutes(): Router {
       if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
       try {
         const redeemPoints = Number(req.body?.redeemPoints ?? 0);
+        const couponCode = String(req.body?.couponCode || req.body?.coupon || '').trim() || undefined;
         const quote = await cartSvc.quoteCart(customerId, {
           redeemPoints: Number.isFinite(redeemPoints) && redeemPoints > 0 ? redeemPoints : 0,
+          couponCode,
+          vendorId: req.body?.vendorId ? String(req.body.vendorId) : undefined,
         });
         sendSuccess(res, quote);
       } catch (e: any) {

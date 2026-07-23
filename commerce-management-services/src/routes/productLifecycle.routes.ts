@@ -5,6 +5,16 @@ import { ProductLifecycleService } from '../service/productLifecycle.service';
 export function createProductLifecyclePublicRoutes(): Router {
   const router = Router();
   const service = new ProductLifecycleService();
+  router.post('/product-payments/webhook', async (req: Request, res: Response) => {
+    try {
+      sendSuccess(
+        res,
+        await service.processPaymentWebhook(req.body || {}, req.header('x-product-signature'), (req as any).rawBody),
+      );
+    } catch (error) {
+      sendBadRequest(res, error instanceof Error ? error.message : 'Product payment webhook failed');
+    }
+  });
   router.post('/product-payments/refund-webhook', async (req: Request, res: Response) => {
     try {
       sendSuccess(res, await service.processRefundWebhook(req.body || {}, req.header('x-product-signature'), (req as any).rawBody));
