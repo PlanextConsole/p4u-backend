@@ -163,6 +163,8 @@ export function createSocioRoutes(): Router {
       const post = await feedSvc.getPost(req.params.postId);
       if (!post) return sendNotFound(res, 'Post not found');
       const viewerId = userIdFromAuth(req);
+      const allowed = await feedSvc.canViewerSeePost(viewerId, post as any);
+      if (!allowed) return sendForbidden(res, 'You cannot view this post');
       const [enriched] = viewerId
         ? await interactionSvc.attachPostFlags(viewerId, [post])
         : [post];
@@ -254,7 +256,7 @@ export function createSocioRoutes(): Router {
     }
   );
 
-  /* ───── Shares ───── */
+  /* ───── Shares / Reposts ───── */
   router.post(
     '/posts/:postId/share',
     requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
@@ -264,6 +266,24 @@ export function createSocioRoutes(): Router {
       if (!userId) return sendBadRequest(res, 'user id missing in token');
       try {
         const result = await interactionSvc.sharePost(userId, req.params.postId);
+        sendCreated(res, result);
+      } catch (err) {
+        if (handleInteractionError(res, err)) return;
+        throw err;
+      }
+    }
+  );
+
+  router.post(
+    '/posts/:postId/repost',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.post.write'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const caption = typeof req.body?.caption === 'string' ? req.body.caption : undefined;
+        const result = await interactionSvc.repostPost(userId, req.params.postId, caption);
         sendCreated(res, result);
       } catch (err) {
         if (handleInteractionError(res, err)) return;
@@ -364,7 +384,7 @@ export function createSocioRoutes(): Router {
     async (req: Request, res: Response) => {
       const viewerId = userIdFromAuth(req);
       const { limit, offset } = parsePaging(req);
-      const rows = await feedSvc.getUserPosts(req.params.userId, limit, offset);
+      const rows = await feedSvc.getUserPosts(req.params.userId, limit, offset, viewerId);
       const enriched = viewerId ? await interactionSvc.attachPostFlags(viewerId, rows) : rows;
       sendSuccess(res, enriched);
     }

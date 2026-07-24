@@ -28,6 +28,28 @@ function withNormalizedMedia<T extends { mediaUrls?: string[] | null }>(post: T)
   return { ...post, mediaUrls: normalizeMediaUrlList(post.mediaUrls) };
 }
 
+function isReelPostType(postType: string | null | undefined): boolean {
+  const t = String(postType || '').trim().toLowerCase();
+  return t === 'reel' || t === 'video';
+}
+
+/**
+ * Product rule: posts (photos/text) are followers-only by default;
+ * reels stay broader/public unless the author picks private.
+ */
+function resolveVisibility(postType: string | undefined, requested?: string): string {
+  const raw = String(requested || '').trim().toLowerCase();
+  if (raw === 'private') return 'private';
+  if (isReelPostType(postType)) {
+    if (raw === 'followers' || raw === 'followers_only') return 'followers';
+    return 'public';
+  }
+  // Non-reel posts: followers-only (even if UI accidentally sends public).
+  if (raw === 'public') return 'followers';
+  if (raw === 'followers' || raw === 'followers_only' || !raw) return 'followers';
+  return raw === 'private' ? 'private' : 'followers';
+}
+
 export class FeedService {
 
   async getSocioAdConfig() {
@@ -77,7 +99,7 @@ export class FeedService {
         contentText: data.contentText || null,
         mediaUrls: normalizeMediaUrlList(data.mediaUrls || null),
         postType: data.postType || 'text',
-        visibility: data.visibility || 'public',
+        visibility: resolveVisibility(data.postType, data.visibility),
         status: 'published',
         metadata: Object.keys(metadata).length ? metadata : null,
       }),
@@ -138,9 +160,29 @@ export class FeedService {
 
   async getPost(postId: string) {
     const row = await AppDataSource.getRepository(SocialPost).findOne({ where: { id: postId } });
-    if (!row) return null;
+    if (!row || row.status !== 'published') return null;
     const author = await resolveAuthor(row.authorId);
     return { ...withNormalizedMedia(row), ...author };
+  }
+
+  /** Viewer may see the post (followers-only / private / public rules). */
+  async canViewerSeePost(viewerId: string | null | undefined, post: SocialPost): Promise<boolean> {
+    if (!post || post.status !== 'published') return false;
+    const vis = String(post.visibility || 'public').toLowerCase();
+    if (viewerId && viewerId === post.authorId) return true;
+    if (vis === 'public') return true;
+    if (!viewerId) return false;
+    if (vis === 'followers' || vis === 'followers_only' || vis === 'private') {
+      return this.isFollowing(viewerId, post.authorId);
+    }
+    return false;
+  }
+
+  private async isFollowing(followerId: string, followingId: string): Promise<boolean> {
+    const row = await AppDataSource.getRepository(UserFollow).findOne({
+      where: { followerId, followingId },
+    });
+    return Boolean(row);
   }
 
   async getFeed(userId: string, limit: number, offset: number) {
@@ -155,6 +197,7 @@ export class FeedService {
       .createQueryBuilder('p')
       .where('p.author_id IN (:...ids)', { ids })
       .andWhere('p.status = :status', { status: 'published' })
+      .andWhere(`(p.visibility <> 'private' OR p.author_id = :userId)`, { userId })
       .orderBy('p.created_at', 'DESC')
       .skip(offset)
       .take(limit)
@@ -162,20 +205,24 @@ export class FeedService {
     return withAuthors(rows.map(withNormalizedMedia));
   }
 
-  /** Personalized feed; falls back to public posts when the user follows nobody yet. */
+  /** Personalized feed; falls back to public reels when the user follows nobody yet. */
   async getFeedWithFallback(userId: string, limit: number, offset: number) {
     const personalized = await this.getFeed(userId, limit, offset);
     if (personalized.length > 0) return personalized;
     return this.getPublicFeed(limit, offset);
   }
 
+  /** Broader discovery surface: public reels/videos only (not followers-only posts). */
   async getPublicFeed(limit: number, offset: number) {
-    const rows = await AppDataSource.getRepository(SocialPost).find({
-      where: { status: 'published', visibility: 'public' },
-      order: { createdAt: 'DESC' },
-      skip: offset,
-      take: limit,
-    });
+    const rows = await AppDataSource.getRepository(SocialPost)
+      .createQueryBuilder('p')
+      .where('p.status = :status', { status: 'published' })
+      .andWhere('p.visibility = :visibility', { visibility: 'public' })
+      .andWhere('LOWER(p.post_type) IN (:...types)', { types: ['reel', 'video'] })
+      .orderBy('p.created_at', 'DESC')
+      .skip(offset)
+      .take(limit)
+      .getMany();
     return withAuthors(rows.map(withNormalizedMedia));
   }
 
@@ -293,14 +340,42 @@ export class FeedService {
     return out;
   }
 
-  async getUserPosts(userId: string, limit: number, offset: number) {
+  async getUserPosts(userId: string, limit: number, offset: number, viewerId?: string | null) {
     const rows = await AppDataSource.getRepository(SocialPost).find({
       where: { authorId: userId, status: 'published' },
       order: { createdAt: 'DESC' },
       skip: offset,
-      take: limit,
+      take: Math.max(limit * 3, limit),
     });
-    return withAuthors(rows.map(withNormalizedMedia));
+
+    const isSelf = Boolean(viewerId && viewerId === userId);
+    let following = isSelf;
+    if (!isSelf && viewerId) {
+      following = await this.isFollowing(viewerId, userId);
+    }
+
+    // Private accounts: non-followers see no posts.
+    if (!isSelf) {
+      try {
+        const { SocioSettingsService } = await import('./socioSettings.service');
+        const settings = await new SocioSettingsService().getSettings(userId);
+        if (settings.privateAccount && !following) {
+          return [];
+        }
+      } catch {
+        /* settings lookup best-effort */
+      }
+    }
+
+    const visible = rows.filter((p) => {
+      if (isSelf) return true;
+      const vis = String(p.visibility || 'public').toLowerCase();
+      if (vis === 'public') return true;
+      if (vis === 'followers' || vis === 'followers_only' || vis === 'private') return following;
+      return false;
+    }).slice(0, limit);
+
+    return withAuthors(visible.map(withNormalizedMedia));
   }
 
   async deletePost(authorId: string, postId: string) {

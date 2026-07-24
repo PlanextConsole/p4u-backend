@@ -234,12 +234,17 @@ export function createCommerceRoutes(): Router {
               ? req.body.address
               : null;
         const paymentMode = String(req.body?.paymentMode || 'cod').trim() || 'cod';
+        const deliverySchedule =
+          req.body?.deliverySchedule && typeof req.body.deliverySchedule === 'object'
+            ? req.body.deliverySchedule
+            : null;
         const order = await cartSvc.createOrderFromCart(customerId, req.body?.vendorId ?? undefined, {
           redeemPoints: Number.isFinite(redeemPoints) && redeemPoints > 0 ? redeemPoints : 0,
           couponCode,
           addressId,
           shippingAddress,
           paymentMode,
+          deliverySchedule,
         });
         sendCreated(res, order);
       } catch (e: any) {
@@ -292,7 +297,7 @@ export function createCommerceRoutes(): Router {
       const auth = (req as any).auth;
       const isAdmin = (auth?.realm_access?.roles || []).map((r: string) => r.toUpperCase()).includes('ADMIN');
       const tokenCustomerId = String(auth?.customer_id || auth?.sub || '');
-      if (!isAdmin && row.customerId !== tokenCustomerId) {
+      if (!isAdmin && !(await svc.customerOwnsOrder(tokenCustomerId, row))) {
         return sendForbidden(res, 'Forbidden: customer self access required');
       }
       sendSuccess(res, row);
@@ -314,6 +319,26 @@ export function createCommerceRoutes(): Router {
         metadata: req.body?.metadata ?? null,
       });
       sendCreated(res, row);
+    }
+  );
+
+  router.post(
+    '/orders/:orderId/payment',
+    requireShopperRole,
+    requirePermission('order.write.self'),
+    async (req: Request, res: Response) => {
+      const customerId = customerIdFromAuth(req);
+      if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
+      try {
+        const data = await productLifecycle.createPayment(
+          customerId,
+          req.params.orderId,
+          req.headers.authorization,
+        );
+        sendCreated(res, data);
+      } catch (e: any) {
+        sendBadRequest(res, e.message);
+      }
     }
   );
 

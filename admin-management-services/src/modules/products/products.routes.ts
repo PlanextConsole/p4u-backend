@@ -22,7 +22,7 @@ export function createProductsAdminRoutes(): Router {
 
   const listProducts = async (req: Request, res: Response) => {
     try {
-      const { limit, offset } = parseLimitOffset(req, { limit: 20, maxLimit: 100 });
+      const { limit, offset } = parseLimitOffset(req, { limit: 20, maxLimit: 500 });
       const { items, total } = await svc.listProducts(limit, offset);
       res.json({ items, total, limit, offset });
     } catch (e: any) {

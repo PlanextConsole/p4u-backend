@@ -4,6 +4,7 @@ import { AppDataSource } from '../config/database';
 import { Booking } from '../entities/Booking';
 import { Vendor } from '../entities/Vendor';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
+import { CustomerProfile } from '../entities/CustomerProfile';
 import {
   buildSlotsForDate,
   mergeWithDefaults,
@@ -99,12 +100,23 @@ export class BookingService {
         ? { ...(data.metadata as Record<string, unknown>) }
         : {};
     const sid = String(data.serviceId || '').trim();
-    if (sid && !meta.serviceName) {
+    if (sid) {
       const item = await AppDataSource.getRepository(CatalogServiceItem).findOne({
         where: { id: sid },
-        select: ['id', 'name'],
+        select: ['id', 'name', 'metadata'],
       });
-      if (item?.name) meta.serviceName = item.name;
+      if (item?.name && !meta.serviceName) meta.serviceName = item.name;
+      if (!meta.serviceImage) {
+        const m = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+        const img =
+          (typeof (m as Record<string, unknown>).imageUrl === 'string'
+            ? String((m as Record<string, unknown>).imageUrl)
+            : null) ||
+          (typeof (m as Record<string, unknown>).iconUrl === 'string'
+            ? String((m as Record<string, unknown>).iconUrl)
+            : null);
+        if (img) meta.serviceImage = img;
+      }
     }
 
     const row = this.repo.create({
@@ -114,16 +126,67 @@ export class BookingService {
       status: 'pending',
       metadata: Object.keys(meta).length ? meta : null,
     });
-    return this.repo.save(row);
+    const saved = await this.repo.save(row);
+    void BookingService.notifyVendorOfNewBooking(saved).catch(() => undefined);
+    return saved;
+  }
+
+  /** Best-effort push when a customer books a service (mirrors CartService.notifyVendorsOfNewOrders). */
+  static async notifyVendorOfNewBooking(booking: Booking) {
+    const base = process.env.NOTIFICATION_SERVICE_URL || process.env.GATEWAY_INTERNAL_URL || '';
+    if (!base || !booking.vendorId) return;
+    const meta = bookingMeta(booking);
+    const serviceName =
+      (typeof meta.serviceName === 'string' && meta.serviceName.trim()) ||
+      'Service booking';
+    try {
+      await fetch(`${String(base).replace(/\/$/, '')}/api/v1/notifications/push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: booking.vendorId,
+          title: 'New booking received',
+          body: `${serviceName} · ${booking.bookingDate} ${booking.timeSlot || ''} — ₹${booking.totalAmount ?? ''}`.trim(),
+          data: {
+            type: 'service_booking',
+            bookingId: booking.id,
+            serviceId: booking.serviceId,
+            bookingDate: booking.bookingDate,
+            timeSlot: booking.timeSlot,
+          },
+        }),
+      }).catch(() => undefined);
+    } catch {
+      // ignore
+    }
   }
 
   async getBooking(customerId: string, bookingId: string): Promise<Booking | null> {
-    return this.repo.findOne({ where: { id: bookingId, customerId } });
+    const ids = await this.customerIdAliases(customerId);
+    if (!ids.length) return null;
+    return this.repo.findOne({ where: { id: bookingId, customerId: In(ids) } });
+  }
+
+  private async customerIdAliases(customerId: string): Promise<string[]> {
+    const id = String(customerId || '').trim();
+    if (!id) return [];
+    const ids = new Set<string>([id]);
+    const profileRepo = AppDataSource.getRepository(CustomerProfile);
+    const byId = await profileRepo.findOne({ where: { id } });
+    const byKeycloak =
+      byId ?? (await profileRepo.findOne({ where: { keycloakUserId: id } }));
+    if (byKeycloak) {
+      ids.add(byKeycloak.id);
+      if (byKeycloak.keycloakUserId) ids.add(String(byKeycloak.keycloakUserId));
+    }
+    return [...ids];
   }
 
   async listMyBookings(customerId: string, limit: number, offset: number) {
+    const ids = await this.customerIdAliases(customerId);
+    if (!ids.length) return { items: [], total: 0, limit, offset };
     const [items, total] = await this.repo.findAndCount({
-      where: { customerId },
+      where: { customerId: In(ids) },
       order: { createdAt: 'DESC' },
       take: limit,
       skip: offset,
@@ -229,7 +292,10 @@ export class BookingService {
     });
   }
   async cancelBooking(customerId: string, bookingId: string): Promise<Booking> {
-    const row = await this.repo.findOne({ where: { id: bookingId, customerId } });
+    const ids = await this.customerIdAliases(customerId);
+    const row = await this.repo.findOne({
+      where: { id: bookingId, customerId: In(ids.length ? ids : [customerId]) },
+    });
     if (!row) throw new Error('Booking not found');
     const current = String(row.status || '').trim().toLowerCase();
     if (current === 'cancelled' || current === 'canceled') throw new Error('Booking is already cancelled');

@@ -18,8 +18,12 @@ export function createOrdersAdminRoutes(): Router {
 
   const listOrders = async (req: Request, res: Response) => {
     const { limit, offset } = parseLimitOffset(req, { limit: 20, maxLimit: 100 });
-    const { items, total } = await svc.listOrders(limit, offset);
-    res.json({ items, total, limit, offset });
+    const status = String(req.query.status ?? '').trim() || undefined;
+    const fromDate = String(req.query.fromDate ?? req.query.from ?? '').trim() || undefined;
+    const toDate = String(req.query.toDate ?? req.query.to ?? '').trim() || undefined;
+    const paymentMode = String(req.query.paymentMode ?? '').trim() || undefined;
+    const { items, total } = await svc.listOrders(limit, offset, { status, fromDate, toDate, paymentMode });
+    res.json({ items, total, limit, offset, status: status ?? null, fromDate: fromDate ?? null, toDate: toDate ?? null, paymentMode: paymentMode ?? null });
   };
   r.get('/orders/all/null', listOrders);
   r.get('/orders', listOrders);

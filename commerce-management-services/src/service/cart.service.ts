@@ -243,6 +243,148 @@ export class CartService {
    * - Persists totals into order.metadata.totals
    * Then clears the cart.
    */
+  /**
+   * Decrement catalog stock for order lines (best-effort on metadata.quantity /
+   * metadata.variations[].quantity). Never blocks checkout if stock fields are absent.
+   */
+  static async decrementStockForLines(
+    manager: typeof AppDataSource.manager,
+    lines: Array<{ productId?: string; quantity?: number; metadata?: Record<string, unknown> | null }>,
+  ) {
+    const byProduct = new Map<string, number>();
+    for (const line of lines) {
+      const pid = String(line.productId || '').trim();
+      if (!pid) continue;
+      byProduct.set(pid, (byProduct.get(pid) || 0) + Math.max(0, Number(line.quantity) || 0));
+    }
+    if (!byProduct.size) return;
+    const products = await manager.getRepository(Product).find({
+      where: { id: In([...byProduct.keys()]) },
+    });
+    for (const product of products) {
+      const take = byProduct.get(product.id) || 0;
+      if (take <= 0) continue;
+      const meta = { ...(product.metadata && typeof product.metadata === 'object' ? product.metadata : {}) };
+      const rawQty = Number((meta as any).quantity ?? (meta as any).stock ?? (meta as any).stockQty);
+      if (Number.isFinite(rawQty)) {
+        (meta as any).quantity = Math.max(0, rawQty - take);
+      }
+      const lineMeta = lines.find((l) => l.productId === product.id)?.metadata;
+      const variationId = String(
+        (lineMeta as any)?.variationId || (lineMeta as any)?.variation_id || '',
+      ).trim();
+      const variations = Array.isArray((meta as any).variations) ? [...(meta as any).variations] : null;
+      if (variationId && variations) {
+        (meta as any).variations = variations.map((v: any) => {
+          if (!v || typeof v !== 'object') return v;
+          const vid = String(v.id || v.variationId || '').trim();
+          if (vid !== variationId) return v;
+          const vq = Number(v.quantity ?? v.stock);
+          if (!Number.isFinite(vq)) return v;
+          return { ...v, quantity: Math.max(0, vq - take) };
+        });
+      }
+      product.metadata = meta;
+      await manager.getRepository(Product).save(product);
+    }
+  }
+
+  /** Apply coupon + points + stock that were deferred until online payment succeeded. */
+  static async applyDeferredCheckoutSideEffects(
+    manager: typeof AppDataSource.manager,
+    order: Order,
+  ) {
+    const meta = order.metadata && typeof order.metadata === 'object' ? { ...order.metadata } : {};
+    if (meta.sideEffectsApplied) return order;
+
+    const couponId = String(meta.couponId || meta.pendingCouponId || '').trim();
+    const discount = Number(meta.pendingDiscount ?? (meta.totals as any)?.discount ?? 0);
+    if (couponId && discount > 0 && !meta.couponUsageRecorded) {
+      const couponSvc = new CouponService();
+      await couponSvc.recordUsage({
+        couponId,
+        customerId: String(order.customerId || ''),
+        orderId: order.id,
+        discountApplied: discount,
+        manager,
+      });
+      meta.couponUsageRecorded = true;
+    }
+
+    const pointsRedeemed = Number(meta.pendingPointsRedeemed ?? (meta.totals as any)?.pointsRedeemed ?? 0);
+    const walletBefore = Number(meta.pendingWalletBalanceBefore ?? (meta.totals as any)?.walletBalanceBefore ?? 0);
+    if (pointsRedeemed > 0 && !meta.pointsDebited) {
+      const profileRepo = manager.getRepository(CustomerProfile);
+      const cid = String(order.customerId || '').trim();
+      let profile = cid
+        ? (await profileRepo.findOne({ where: { id: cid } })) ||
+          (await profileRepo.findOne({ where: { keycloakUserId: cid } }))
+        : null;
+      if (profile?.id) {
+        await manager.getRepository(RewardPointsLedger).save(
+          manager.getRepository(RewardPointsLedger).create({
+            id: randomUUID(),
+            customerId: profile.id,
+            points: -pointsRedeemed,
+            balanceAfter: walletBefore - pointsRedeemed,
+            type: 'order_redeem',
+            referenceId: order.id,
+            description: 'Points redeemed at checkout',
+            metadata: {
+              orderRef: order.orderRef,
+              orderId: order.id,
+              value: meta.pendingPointsRedeemedValue ?? (meta.totals as any)?.pointsRedeemedValue,
+            },
+          }),
+        );
+        await manager.getRepository(Settlement).save(
+          manager.getRepository(Settlement).create({
+            vendorId: order.vendorId,
+            orderId: order.id,
+            settlementType: 'points',
+            status: 'posted',
+            amount: String(-pointsRedeemed),
+            metadata: {
+              customerId: profile.id,
+              type: 'order_redeem',
+              orderRef: order.orderRef,
+              description: 'Points redeemed at checkout',
+            },
+          }),
+        );
+        profile.metadata = {
+          ...(profile.metadata || {}),
+          wallet: walletBefore - pointsRedeemed,
+          walletBalance: walletBefore - pointsRedeemed,
+        };
+        await profileRepo.save(profile);
+        meta.pointsDebited = true;
+      }
+    }
+
+    const lines = Array.isArray(meta.lines) ? meta.lines : [];
+    if (!meta.stockDecremented && lines.length) {
+      await CartService.decrementStockForLines(manager, lines as any[]);
+      meta.stockDecremented = true;
+    }
+
+    // Clear any remaining cart items that match this checkout (idempotent).
+    if (!meta.cartClearedOnPay && meta.cartId) {
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(CartItem)
+        .where('cart_id = :id', { id: meta.cartId })
+        .execute();
+      meta.cartClearedOnPay = true;
+    }
+
+    meta.sideEffectsApplied = true;
+    meta.sideEffectsPending = false;
+    order.metadata = meta;
+    return manager.getRepository(Order).save(order);
+  }
+
   async createOrderFromCart(
     customerId: string,
     vendorId?: string | null,
@@ -252,8 +394,9 @@ export class CartService {
       addressId?: string;
       shippingAddress?: Record<string, unknown> | null;
       paymentMode?: string;
+      deliverySchedule?: Record<string, unknown> | null;
     } = {},
-  ): Promise<ReturnType<CommerceQueryService['createOrder']>> {
+  ): Promise<Order & { orders?: Order[] }> {
     const data = await this.getCartResponse(customerId);
     if (!data.items.length) {
       throw new Error('Cart is empty');
@@ -270,6 +413,11 @@ export class CartService {
     if (!shippingAddress) {
       throw new Error('Delivery address snapshot is required');
     }
+
+    const deliverySchedule =
+      opts.deliverySchedule && typeof opts.deliverySchedule === 'object'
+        ? opts.deliverySchedule
+        : null;
 
     const breakdown = await this.pricing.priceCart(
       customerId,
@@ -292,10 +440,6 @@ export class CartService {
       throw new Error(`Cart subtotal ${breakdown.itemSubtotal} below minimum ${breakdown.minCartValue}`);
     }
 
-    // Snapshot the product name onto each line so order history is self-describing
-    // (clients still hydrate images/price from the catalog, but the name is captured
-    // at purchase time and survives a later product edit/delete). Additive only —
-    // does not affect pricing/totals.
     const lineProductIds = [
       ...new Set(data.items.map((i) => i.productId).filter(Boolean) as string[]),
     ];
@@ -321,11 +465,14 @@ export class CartService {
           undefined,
       },
     }));
-    const vendorIds = new Set(lines.map((l) => l.vendorId ?? ''));
-    let resolvedVendor = normalizeVendorId(vendorId);
-    if (!resolvedVendor && vendorIds.size === 1) {
-      const only = [...vendorIds][0];
-      resolvedVendor = only === '' ? null : only;
+
+    // Split into one order per vendor so each vendor owns their lines.
+    const linesByVendor = new Map<string, typeof lines>();
+    for (const line of lines) {
+      const key = normalizeVendorId(line.vendorId) || '_none';
+      const bucket = linesByVendor.get(key) || [];
+      bucket.push(line);
+      linesByVendor.set(key, bucket);
     }
 
     const profileRepo = AppDataSource.getRepository(CustomerProfile);
@@ -343,123 +490,229 @@ export class CartService {
           }
         : {};
 
+    const paymentMode = String(opts.paymentMode || 'cod').trim().toLowerCase() || 'cod';
+    const isCod = paymentMode === 'cod';
+
     const queryRunner = AppDataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
       const orderRepo = queryRunner.manager.getRepository(Order);
-      const paymentMode = String(opts.paymentMode || 'cod').trim().toLowerCase() || 'cod';
-      const order = orderRepo.create({
-        id: randomUUID(),
-        customerId,
-        vendorId: resolvedVendor,
-        orderRef: `ORD-${Date.now()}`,
-        status: paymentMode === 'cod' ? 'placed' : 'created',
-        totalAmount: breakdown.grandTotal,
-        metadata: {
-          source: 'cart',
-          cartId: data.id,
-          lines,
-          multiVendor: vendorIds.size > 1,
-          totals: breakdown,
-          vendorName: breakdown.vendors.find((v) => v.vendorName)?.vendorName ?? undefined,
-          addressId,
-          shippingAddress,
-          paymentMode,
-          paymentStatus: paymentMode === 'cod' ? 'cod' : 'pending',
-          couponCode: breakdown.couponCode,
-          couponId: breakdown.couponId,
-          ...customerSnapshot,
-        },
-      });
-      await orderRepo.save(order);
-
-      if (breakdown.couponId && Number(breakdown.discount) > 0) {
-        const couponSvc = new CouponService();
-        await couponSvc.recordUsage({
-          couponId: breakdown.couponId,
-          customerId,
-          orderId: order.id,
-          discountApplied: Number(breakdown.discount),
-          manager: queryRunner.manager,
-        });
-      }
-
-      // One settlement row per vendor for the cash split.
       const settlementRepo = queryRunner.manager.getRepository(Settlement);
-      for (const v of breakdown.vendors) {
-        await settlementRepo.save(
-          settlementRepo.create({
-            id: randomUUID(),
-            vendorId: v.vendorId,
-            orderId: order.id,
-            settlementType: 'cash',
-            status: 'pending',
-            amount: v.netToVendor,
-            metadata: {
-              orderRef: order.orderRef,
-              vendorSubtotal: v.subtotal,
-              commissionTotal: v.commissionTotal,
-              vendorName: v.vendorName,
+      const created: Order[] = [];
+      const stamp = Date.now();
+      let vendorIndex = 0;
+
+      for (const [vendorKey, vendorLines] of linesByVendor) {
+        const resolvedVendor = vendorKey === '_none' ? normalizeVendorId(vendorId) : vendorKey;
+        const vendorBreakdown = breakdown.vendors.find((v) => String(v.vendorId) === String(resolvedVendor));
+        const vendorSubtotal = vendorLines.reduce((s, l) => s + Number(l.lineTotal || 0), 0);
+        // Allocate coupon/points proportionally across vendor orders; primary order holds redeem bookkeeping.
+        const share =
+          Number(breakdown.itemSubtotal) > 0 ? vendorSubtotal / Number(breakdown.itemSubtotal) : 1 / linesByVendor.size;
+        // Prefer vendor row totals when available; else line sum.
+        let amount = vendorBreakdown
+          ? Number(vendorBreakdown.subtotal) -
+            Number(breakdown.discount) * share +
+            Number(breakdown.deliveryFee || 0) * share +
+            Number(breakdown.platformFee || 0) * share -
+            Number(breakdown.pointsRedeemedValue || 0) * share
+          : vendorSubtotal;
+        if (!Number.isFinite(amount) || amount < 0) amount = Math.max(0, vendorSubtotal);
+
+        const isPrimary = vendorIndex === 0;
+        const order = orderRepo.create({
+          id: randomUUID(),
+          customerId,
+          vendorId: resolvedVendor,
+          orderRef: `ORD-${stamp}${linesByVendor.size > 1 ? `-${vendorIndex + 1}` : ''}`,
+          status: isCod ? 'placed' : 'created',
+          totalAmount: Number(amount.toFixed(2)).toFixed(2),
+          metadata: {
+            source: 'cart',
+            cartId: data.id,
+            lines: vendorLines,
+            multiVendor: linesByVendor.size > 1,
+            siblingOrderIds: [] as string[],
+            totals: {
+              ...breakdown,
+              itemSubtotal: String(vendorSubtotal.toFixed(2)),
+              grandTotal: String(Number(amount.toFixed(2))),
+              vendorShare: share,
             },
-          }),
-        );
+            cartTotals: breakdown,
+            vendorName:
+              vendorBreakdown?.vendorName ??
+              breakdown.vendors.find((v) => v.vendorName)?.vendorName ??
+              undefined,
+            addressId,
+            shippingAddress,
+            deliverySchedule,
+            paymentMode,
+            paymentStatus: isCod ? 'cod' : 'pending',
+            couponCode: breakdown.couponCode,
+            couponId: breakdown.couponId,
+            pendingCouponId: !isCod && isPrimary ? breakdown.couponId : null,
+            pendingDiscount: !isCod && isPrimary ? Number(breakdown.discount) : 0,
+            pendingPointsRedeemed: !isCod && isPrimary ? Number(breakdown.pointsRedeemed) : 0,
+            pendingPointsRedeemedValue: !isCod && isPrimary ? breakdown.pointsRedeemedValue : 0,
+            pendingWalletBalanceBefore: !isCod && isPrimary ? breakdown.walletBalanceBefore : 0,
+            sideEffectsPending: !isCod && isPrimary,
+            sideEffectsApplied: isCod,
+            ...customerSnapshot,
+          },
+        });
+        await orderRepo.save(order);
+        created.push(order);
+
+        if (resolvedVendor) {
+          await settlementRepo.save(
+            settlementRepo.create({
+              id: randomUUID(),
+              vendorId: resolvedVendor,
+              orderId: order.id,
+              settlementType: 'cash',
+              status: 'pending',
+              amount: vendorBreakdown?.netToVendor ?? String(vendorSubtotal.toFixed(2)),
+              metadata: {
+                orderRef: order.orderRef,
+                vendorSubtotal: vendorBreakdown?.subtotal ?? vendorSubtotal,
+                commissionTotal: vendorBreakdown?.commissionTotal ?? 0,
+                vendorName: vendorBreakdown?.vendorName,
+              },
+            }),
+          );
+        }
+        vendorIndex += 1;
       }
 
-      // Debit redeemed wallet points if any.
-      if (breakdown.pointsRedeemed > 0 && profile?.id) {
-        const ledgerRepo = queryRunner.manager.getRepository(RewardPointsLedger);
-        await ledgerRepo.save(
-          ledgerRepo.create({
-            id: randomUUID(),
-            customerId: profile.id,
-            points: -breakdown.pointsRedeemed,
-            balanceAfter: breakdown.walletBalanceBefore - breakdown.pointsRedeemed,
-            type: 'order_redeem',
-            referenceId: order.id,
-            description: 'Points redeemed at checkout',
-            metadata: { orderRef: order.orderRef, orderId: order.id, value: breakdown.pointsRedeemedValue },
-          }),
-        );
-        await queryRunner.manager.getRepository(Settlement).save(
-          queryRunner.manager.getRepository(Settlement).create({
-            vendorId: resolvedVendor,
-            orderId: order.id,
-            settlementType: 'points',
-            status: 'posted',
-            amount: String(-breakdown.pointsRedeemed),
-            metadata: {
+      // Link siblings for multi-vendor checkouts.
+      if (created.length > 1) {
+        const ids = created.map((o) => o.id);
+        for (const order of created) {
+          const meta = { ...(order.metadata as Record<string, unknown>) };
+          meta.siblingOrderIds = ids.filter((id) => id !== order.id);
+          order.metadata = meta;
+          await orderRepo.save(order);
+        }
+      }
+
+      const primary = created[0];
+
+      if (isCod) {
+        if (breakdown.couponId && Number(breakdown.discount) > 0) {
+          const couponSvc = new CouponService();
+          await couponSvc.recordUsage({
+            couponId: breakdown.couponId,
+            customerId,
+            orderId: primary.id,
+            discountApplied: Number(breakdown.discount),
+            manager: queryRunner.manager,
+          });
+          const meta = { ...(primary.metadata as Record<string, unknown>), couponUsageRecorded: true };
+          primary.metadata = meta;
+          await orderRepo.save(primary);
+        }
+
+        if (breakdown.pointsRedeemed > 0 && profile?.id) {
+          const ledgerRepo = queryRunner.manager.getRepository(RewardPointsLedger);
+          await ledgerRepo.save(
+            ledgerRepo.create({
+              id: randomUUID(),
               customerId: profile.id,
+              points: -breakdown.pointsRedeemed,
+              balanceAfter: breakdown.walletBalanceBefore - breakdown.pointsRedeemed,
               type: 'order_redeem',
-              orderRef: order.orderRef,
+              referenceId: primary.id,
               description: 'Points redeemed at checkout',
-            },
-          }),
-        );
-        // Mirror the running wallet balance into customer metadata.
-        const merged = { ...(profile.metadata || {}), wallet: breakdown.walletBalanceBefore - breakdown.pointsRedeemed, walletBalance: breakdown.walletBalanceBefore - breakdown.pointsRedeemed };
-        profile.metadata = merged;
-        await queryRunner.manager.getRepository(CustomerProfile).save(profile);
-      }
+              metadata: {
+                orderRef: primary.orderRef,
+                orderId: primary.id,
+                value: breakdown.pointsRedeemedValue,
+              },
+            }),
+          );
+          await settlementRepo.save(
+            settlementRepo.create({
+              vendorId: primary.vendorId,
+              orderId: primary.id,
+              settlementType: 'points',
+              status: 'posted',
+              amount: String(-breakdown.pointsRedeemed),
+              metadata: {
+                customerId: profile.id,
+                type: 'order_redeem',
+                orderRef: primary.orderRef,
+                description: 'Points redeemed at checkout',
+              },
+            }),
+          );
+          profile.metadata = {
+            ...(profile.metadata || {}),
+            wallet: breakdown.walletBalanceBefore - breakdown.pointsRedeemed,
+            walletBalance: breakdown.walletBalanceBefore - breakdown.pointsRedeemed,
+          };
+          await queryRunner.manager.getRepository(CustomerProfile).save(profile);
+        }
 
-      // Clear cart inside the same transaction.
-      await queryRunner.manager
-        .createQueryBuilder()
-        .delete()
-        .from(CartItem)
-        .where('cart_id = :id', { id: data.id })
-        .execute();
+        await CartService.decrementStockForLines(queryRunner.manager, lines as any[]);
+        for (const order of created) {
+          const meta = { ...(order.metadata as Record<string, unknown>), stockDecremented: true };
+          order.metadata = meta;
+          await orderRepo.save(order);
+        }
+
+        await queryRunner.manager
+          .createQueryBuilder()
+          .delete()
+          .from(CartItem)
+          .where('cart_id = :id', { id: data.id })
+          .execute();
+      }
+      // Online: leave cart + coupon + points until payment capture (see applyDeferredCheckoutSideEffects).
 
       await queryRunner.commitTransaction();
-      await this.customerReferralRewards.applyAfterFirstPurchase(customerId, order.id).catch((error) => {
+      await this.customerReferralRewards.applyAfterFirstPurchase(customerId, primary.id).catch((error) => {
         console.error('[commerce] first-purchase referral reward failed:', error);
       });
-      return order;
+
+      // Fire-and-forget vendor notifications (best effort).
+      void CartService.notifyVendorsOfNewOrders(created).catch(() => undefined);
+
+      if (created.length === 1) return primary;
+      return Object.assign(primary, { orders: created });
     } catch (e) {
       await queryRunner.rollbackTransaction();
       throw e;
     } finally {
       await queryRunner.release();
+    }
+  }
+
+  static async notifyVendorsOfNewOrders(orders: Order[]) {
+    const base = process.env.NOTIFICATION_SERVICE_URL || process.env.GATEWAY_INTERNAL_URL || '';
+    if (!base) return;
+    for (const order of orders) {
+      if (!order.vendorId) continue;
+      const meta = (order.metadata || {}) as Record<string, unknown>;
+      try {
+        await fetch(`${String(base).replace(/\/$/, '')}/api/v1/notifications/push`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: order.vendorId,
+            title: 'New order received',
+            body: `Order ${order.orderRef || order.id} — ₹${order.totalAmount}`,
+            data: {
+              type: 'product_order',
+              orderId: order.id,
+              paymentMode: meta.paymentMode,
+            },
+          }),
+        }).catch(() => undefined);
+      } catch {
+        // ignore
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 import { Brackets, In } from 'typeorm';
-import { AppDataSource } from '../../config/database';
+import { AppDataSource, isPostgresDbType } from '../../config/database';
 import { AdminAuditLog } from '../admin-core/entities/AdminAuditLog';
 import { AuditService } from '../admin-core/services/audit.service';
 import { Customer } from '../customers/entities/Customer';
@@ -10,13 +10,53 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import { UpdateSettlementDto } from './dto/update-settlement.dto';
 
+export type ListOrdersFilters = {
+  status?: string;
+  fromDate?: string;
+  toDate?: string;
+  paymentMode?: string;
+};
+
 export class OrdersAdminService {
   private audit = new AuditService();
   private static readonly DELETABLE_STATUSES = new Set(['cancelled', 'canceled']);
 
-  async listOrders(limit: number, offset: number): Promise<{ items: Order[]; total: number }> {
+  async listOrders(
+    limit: number,
+    offset: number,
+    filters: ListOrdersFilters = {},
+  ): Promise<{ items: Order[]; total: number }> {
     const repo = AppDataSource.getRepository(Order);
-    const [items, total] = await repo.findAndCount({ order: { createdAt: 'DESC' }, take: limit, skip: offset });
+    const qb = repo.createQueryBuilder('o').orderBy('o.createdAt', 'DESC').take(limit).skip(offset);
+
+    if (filters.status?.trim()) {
+      qb.andWhere('LOWER(o.status) = :status', { status: filters.status.trim().toLowerCase() });
+    }
+    if (filters.fromDate?.trim()) {
+      qb.andWhere('o.created_at >= :fromDate', { fromDate: filters.fromDate.trim() });
+    }
+    if (filters.toDate?.trim()) {
+      const end = new Date(filters.toDate.trim());
+      if (!Number.isNaN(end.getTime())) {
+        end.setHours(23, 59, 59, 999);
+        qb.andWhere('o.created_at <= :toDate', { toDate: end });
+      }
+    }
+    if (filters.paymentMode?.trim()) {
+      const mode = filters.paymentMode.trim().toLowerCase();
+      if (mode === 'cod' || mode === 'online') {
+        if (isPostgresDbType()) {
+          qb.andWhere(`LOWER(COALESCE(o.metadata->>'paymentMode', '')) = :paymentMode`, { paymentMode: mode });
+        } else {
+          qb.andWhere(
+            `LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.metadata, '$.paymentMode')), '')) = :paymentMode`,
+            { paymentMode: mode },
+          );
+        }
+      }
+    }
+
+    const [items, total] = await qb.getManyAndCount();
     return { items, total };
   }
 

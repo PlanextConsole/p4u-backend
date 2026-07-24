@@ -77,6 +77,68 @@ export class InteractionService {
     });
   }
 
+  /**
+   * Real repost: creates a new post owned by the viewer that references the original,
+   * increments original shareCount, and credits share points.
+   */
+  async repostPost(userId: string, postId: string, caption?: string) {
+    return AppDataSource.transaction(async (manager) => {
+      const postRepo = manager.getRepository(SocialPost);
+      const original = await postRepo.findOne({ where: { id: postId, status: 'published' } });
+      if (!original) {
+        const err = new Error('Post not found');
+        (err as Error & { statusCode?: number }).statusCode = 404;
+        throw err;
+      }
+
+      // Followers-only / private originals cannot be reposted by non-followers.
+      const vis = String(original.visibility || 'public').toLowerCase();
+      if (original.authorId !== userId && vis !== 'public') {
+        const following = await this.isFollowing(userId, original.authorId);
+        if (!following) {
+          const err = new Error('You can only repost posts you are allowed to view');
+          (err as Error & { statusCode?: number }).statusCode = 403;
+          throw err;
+        }
+      }
+
+      const originalMeta =
+        original.metadata && typeof original.metadata === 'object'
+          ? { ...(original.metadata as Record<string, unknown>) }
+          : {};
+      const captionText = String(caption || '').trim();
+      const repost = await postRepo.save(
+        postRepo.create({
+          authorId: userId,
+          authorType: 'customer',
+          contentText: captionText || original.contentText,
+          mediaUrls: original.mediaUrls,
+          postType: original.postType,
+          // Reposts inherit reel vs post visibility rules via create defaults below.
+          visibility:
+            String(original.postType || '').toLowerCase() === 'reel' ||
+            String(original.postType || '').toLowerCase() === 'video'
+              ? 'public'
+              : 'followers',
+          status: 'published',
+          metadata: {
+            ...originalMeta,
+            isRepost: true,
+            originalPostId: original.id,
+            originalAuthorId: original.authorId,
+            repostedAt: new Date().toISOString(),
+          },
+        }),
+      );
+
+      await postRepo.increment({ id: original.id }, 'shareCount', 1);
+      await this.rewardPoints.creditPostShareInTransaction(manager, userId, original.id);
+
+      const author = await resolveAuthor(userId);
+      return { ...repost, ...author, originalPostId: original.id };
+    });
+  }
+
   async addComment(userId: string, postId: string, data: { contentText: string; parentCommentId?: string }) {
     const postRepo = AppDataSource.getRepository(SocialPost);
     const post = await postRepo.findOne({ where: { id: postId, status: 'published' } });
@@ -84,6 +146,38 @@ export class InteractionService {
       const err = new Error('Post not found');
       (err as Error & { statusCode?: number }).statusCode = 404;
       throw err;
+    }
+
+    if (post.authorId !== userId) {
+      // Author-level commentsAllowFrom setting (real enforcement, not UI-only).
+      try {
+        const { SocioSettingsService } = await import('./socioSettings.service');
+        const settings = await new SocioSettingsService().getSettings(post.authorId);
+        const allow = settings.commentsAllowFrom || 'Everyone';
+        if (allow === 'No one') {
+          const err = new Error('This account is not accepting comments');
+          (err as Error & { statusCode?: number }).statusCode = 403;
+          throw err;
+        }
+        if (allow === 'People you follow') {
+          const ok = await this.isFollowing(post.authorId, userId);
+          if (!ok) {
+            const err = new Error('Only people this account follows can comment');
+            (err as Error & { statusCode?: number }).statusCode = 403;
+            throw err;
+          }
+        }
+        if (allow === 'Your followers') {
+          const ok = await this.isFollowing(userId, post.authorId);
+          if (!ok) {
+            const err = new Error('Only followers can comment on this account');
+            (err as Error & { statusCode?: number }).statusCode = 403;
+            throw err;
+          }
+        }
+      } catch (e) {
+        if ((e as Error & { statusCode?: number }).statusCode) throw e;
+      }
     }
 
     const meta =

@@ -40,6 +40,35 @@ export const DEFAULT_SOCIAL_SETTINGS: Required<SocialSettingsPayload> = {
   blockedUsers: [],
 };
 
+/** Canonical allow-from values used by MessageService + UI. */
+const ALLOW_FROM_CANONICAL = new Set([
+  'Everyone',
+  'People you follow',
+  'Your followers',
+  'No one',
+]);
+
+function normalizeAllowFrom(raw: unknown, fallback: string): string {
+  if (typeof raw !== 'string' || !raw.trim()) return fallback;
+  const v = raw.trim();
+  if (ALLOW_FROM_CANONICAL.has(v)) return v;
+  const lower = v.toLowerCase().replace(/_/g, ' ').trim();
+  if (lower === 'everyone') return 'Everyone';
+  if (lower === 'none' || lower === 'no one' || lower === 'off') return 'No one';
+  if (lower === 'followers' || lower === 'your followers' || lower === 'followers only') {
+    return 'Your followers';
+  }
+  if (
+    lower === 'following' ||
+    lower === 'people you follow' ||
+    lower === 'people i follow' ||
+    lower === 'followed'
+  ) {
+    return 'People you follow';
+  }
+  return fallback;
+}
+
 function mergeSettings(raw: unknown): Required<SocialSettingsPayload> {
   const base = { ...DEFAULT_SOCIAL_SETTINGS, notifications: { ...DEFAULT_SOCIAL_SETTINGS.notifications } };
   if (!raw || typeof raw !== 'object') return base;
@@ -48,8 +77,8 @@ function mergeSettings(raw: unknown): Required<SocialSettingsPayload> {
     privateAccount: typeof src.privateAccount === 'boolean' ? src.privateAccount : base.privateAccount,
     showActivityStatus: typeof src.showActivityStatus === 'boolean' ? src.showActivityStatus : base.showActivityStatus,
     storyReplies: typeof src.storyReplies === 'string' ? src.storyReplies : base.storyReplies,
-    messageAllowFrom: typeof src.messageAllowFrom === 'string' ? src.messageAllowFrom : base.messageAllowFrom,
-    commentsAllowFrom: typeof src.commentsAllowFrom === 'string' ? src.commentsAllowFrom : base.commentsAllowFrom,
+    messageAllowFrom: normalizeAllowFrom(src.messageAllowFrom, base.messageAllowFrom),
+    commentsAllowFrom: normalizeAllowFrom(src.commentsAllowFrom, base.commentsAllowFrom),
     filterOffensiveComments:
       typeof src.filterOffensiveComments === 'boolean' ? src.filterOffensiveComments : base.filterOffensiveComments,
     notifications: {

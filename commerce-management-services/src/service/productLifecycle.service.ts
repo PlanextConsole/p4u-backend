@@ -1,7 +1,10 @@
 import axios from 'axios';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Order } from '../entities/Order';
+import { CartService } from './cart.service';
+import { CommerceQueryService } from './commerceQuery.service';
 
 type JsonRecord = Record<string, any>;
 
@@ -14,13 +17,16 @@ function history(meta: JsonRecord): JsonRecord[] {
 }
 
 export class ProductLifecycleService {
+  private commerce = new CommerceQueryService();
+
   private async ownedOrder(customerId: string, orderId: string, lock = false, manager = AppDataSource.manager) {
     const order = await manager.getRepository(Order).findOne({
       where: { id: orderId },
       ...(lock ? { lock: { mode: 'pessimistic_write' as const } } : {}),
     });
     if (!order) throw new Error('Order not found');
-    if (order.customerId !== customerId) throw new Error('Order does not belong to this customer');
+    const owns = await this.commerce.customerOwnsOrder(customerId, order);
+    if (!owns) throw new Error('Order does not belong to this customer');
     return order;
   }
 
@@ -197,6 +203,33 @@ export class ProductLifecycleService {
           paymentEventId: payload.eventId ?? meta.paymentEventId ?? null,
           productStatusHistory: nextHistory,
         };
+        await manager.getRepository(Order).save(order);
+        await CartService.applyDeferredCheckoutSideEffects(manager, order);
+
+        // Mark sibling multi-vendor orders paid when a combined checkout pays primary.
+        const siblings = Array.isArray(meta.siblingOrderIds) ? meta.siblingOrderIds.map(String) : [];
+        for (const siblingId of siblings) {
+          const sibling = await manager.getRepository(Order).findOne({
+            where: { id: siblingId },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!sibling) continue;
+          const sm = metaOf(sibling);
+          if (sibling.status === 'paid' || String(sm.paymentStatus || '').toLowerCase() === 'paid') continue;
+          const sh = history(sm);
+          sh.push({ status: 'paid', at: now, actor: 'payment_provider', note: 'Paid with sibling checkout' });
+          sibling.status = 'paid';
+          sibling.metadata = {
+            ...sm,
+            paymentStatus: 'paid',
+            paidAt: now,
+            providerOrderId: payload.providerOrderId ?? sm.providerOrderId ?? null,
+            providerPaymentId: payload.providerPaymentId ?? sm.providerPaymentId ?? null,
+            productStatusHistory: sh,
+          };
+          await manager.getRepository(Order).save(sibling);
+          await CartService.applyDeferredCheckoutSideEffects(manager, sibling);
+        }
       } else {
         nextHistory.push({ status: 'payment_failed', at: now, actor: 'payment_provider' });
         order.metadata = {
@@ -207,13 +240,77 @@ export class ProductLifecycleService {
           providerOrderId: payload.providerOrderId ?? meta.providerOrderId ?? null,
           productStatusHistory: nextHistory,
         };
+        await manager.getRepository(Order).save(order);
       }
-      await manager.getRepository(Order).save(order);
       return {
         orderId: order.id,
         status: order.status,
         paymentStatus: (order.metadata as JsonRecord)?.paymentStatus ?? null,
       };
     });
+  }
+
+  /** Create / retry an online payment intent for an unpaid product order. */
+  async createPayment(customerId: string, orderId: string, authorization?: string) {
+    const order = await this.ownedOrder(customerId, orderId);
+    const meta = metaOf(order);
+    const paymentMode = String(meta.paymentMode || '').toLowerCase();
+    if (paymentMode === 'cod' || String(meta.paymentStatus || '').toLowerCase() === 'cod') {
+      throw new Error('COD orders do not require an online payment');
+    }
+    if (order.status === 'paid' || String(meta.paymentStatus || '').toLowerCase() === 'paid') {
+      throw new Error('Order is already paid');
+    }
+    if (!['created', 'pending'].includes(String(order.status || '').toLowerCase()) &&
+        String(meta.paymentStatus || '').toLowerCase() !== 'pending' &&
+        String(meta.paymentStatus || '').toLowerCase() !== 'failed') {
+      // Allow pay-retry while still unpaid
+      if (!['created'].includes(String(order.status || '').toLowerCase())) {
+        const ps = String(meta.paymentStatus || '').toLowerCase();
+        if (ps !== 'pending' && ps !== 'failed') {
+          throw new Error(`Order cannot be paid from status ${order.status}`);
+        }
+      }
+    }
+    if (!authorization) throw new Error('Authenticated payment creation is required');
+    const baseUrl = process.env.PAYMENT_SERVICE_URL || 'http://localhost:8087';
+    const siblingIds = Array.isArray(meta.siblingOrderIds) ? meta.siblingOrderIds.map(String) : [];
+    const amount = Number(order.totalAmount);
+    let payAmount = amount;
+    if (siblingIds.length) {
+      const siblings = siblingIds.length
+        ? await AppDataSource.getRepository(Order).find({ where: { id: In(siblingIds) } })
+        : [];
+      payAmount = amount + siblings.reduce((s, o) => s + Number(o.totalAmount || 0), 0);
+    }
+    const response = await axios.post(
+      `${baseUrl}/api/v1/payments/intents`,
+      {
+        orderId: order.id,
+        amount: String(Number(payAmount).toFixed(2)),
+        currency: 'INR',
+        metadata: {
+          domain: 'product',
+          orderType: 'product',
+          productOrderId: order.id,
+          siblingOrderIds: siblingIds,
+          orderRef: order.orderRef,
+        },
+      },
+      { headers: { Authorization: authorization }, timeout: 15000 },
+    );
+    const intent = response.data?.data ?? response.data;
+    const providerOrderId = String(intent?.providerRef || '');
+    if (!providerOrderId) throw new Error('Payment provider did not return an order reference');
+    return {
+      id: intent?.id ? String(intent.id) : null,
+      providerIntentId: intent?.id ? String(intent.id) : null,
+      providerOrderId,
+      providerRef: providerOrderId,
+      amount: Number(payAmount),
+      currency: 'INR',
+      status: 'pending',
+      orderId: order.id,
+    };
   }
 }
