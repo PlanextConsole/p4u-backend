@@ -23,6 +23,10 @@ export class Vendor {
   @Column({ name: 'owner_name', type: 'varchar', length: 255 })
   ownerName!: string;
 
+  /** Kept in sync with auth CatalogVendor (vendor OTP login / onboarding). */
+  @Column({ name: 'business_type', type: 'varchar', length: 64, nullable: true })
+  businessType!: string | null;
+
   @Column({ type: 'int', nullable: true })
   age!: number | null;
 

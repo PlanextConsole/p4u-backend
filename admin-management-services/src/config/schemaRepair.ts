@@ -51,6 +51,8 @@ const CATALOG_VENDORS_COLUMNS: { column: string; ddl: string }[] = [
   // Required by Vendor entity mapping and vendor-type filtering.
   { column: 'vendor_kind', ddl: '`vendor_kind` VARCHAR(16) NOT NULL DEFAULT \'product\'' },
   { column: 'vendor_type', ddl: '`vendor_type` VARCHAR(16) NOT NULL DEFAULT \'PRODUCT\'' },
+  // Required by auth CatalogVendor on vendor OTP login / onboarding upsert.
+  { column: 'business_type', ddl: '`business_type` VARCHAR(64) NULL' },
 ];
 
 /**
