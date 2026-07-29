@@ -9,8 +9,10 @@ export interface VendorOnboardingPayload {
   vendorKind?: string | null;
   ownerName?: string | null;
   businessName?: string | null;
+  businessType?: string | null;
   email?: string | null;
   phone?: string | null;
+  secondaryPhone?: string | null;
   categoriesJson?: unknown;
   servicesJson?: unknown;
   gst?: string | null;
@@ -48,6 +50,19 @@ function normalizeVendorType(value: unknown): 'SERVICE' | 'PRODUCT' | 'BOTH' | n
   return ALLOWED_TYPES.has(v) ? (v as 'SERVICE' | 'PRODUCT' | 'BOTH') : null;
 }
 
+function hasSelection(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some((entry) => {
+    if (typeof entry === 'string' || typeof entry === 'number') {
+      return String(entry).trim().length > 0;
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const row = entry as Record<string, unknown>;
+    return [row.id, row.value, row.name, row.slug, row.serviceId, row.categoryId].some(
+      (candidate) => candidate != null && String(candidate).trim().length > 0,
+    );
+  });
+}
 /** Lowercase vendorKind from an uppercase vendorType. */
 function kindFromType(vendorType: 'SERVICE' | 'PRODUCT' | 'BOTH'): 'service' | 'product' | 'both' {
   return vendorType === 'BOTH' ? 'both' : vendorType === 'SERVICE' ? 'service' : 'product';
@@ -86,13 +101,6 @@ export class VendorOnboardingService {
     if (!vendorType) {
       throw new Error('vendorType is required (SERVICE, PRODUCT or BOTH)');
     }
-    if (!payload.businessName || !String(payload.businessName).trim()) {
-      throw new Error('businessName is required');
-    }
-    if (!payload.ownerName || !String(payload.ownerName).trim()) {
-      throw new Error('ownerName is required');
-    }
-
     const user = await this.userRepo.findByKeycloakId(ctx.keycloakUserId).catch(() => null);
 
     const existing = await this.requestRepo.findPendingByKeycloakUserId(ctx.keycloakUserId);
@@ -107,9 +115,11 @@ export class VendorOnboardingService {
       userType: 'VENDOR',
       vendorType,
       vendorKind: kindFromType(vendorType),
-      ownerName: String(payload.ownerName).trim(),
-      businessName: String(payload.businessName).trim(),
+      ownerName: String(payload.ownerName ?? '').trim(),
+      businessName: String(payload.businessName ?? '').trim(),
+      businessType: payload.businessType ?? null,
       phone: payload.phone ?? null,
+      secondaryPhone: payload.secondaryPhone ?? null,
       categoriesJson: payload.categoriesJson ?? null,
       servicesJson: payload.servicesJson ?? null,
       gst: payload.gst ?? null,
@@ -159,6 +169,8 @@ export class VendorOnboardingService {
     target.keycloakUserId = ctx.keycloakUserId;
     target.businessName = String(payload.businessName ?? '').trim();
     target.ownerName = String(payload.ownerName ?? '').trim();
+    target.businessType = stringOrNull(payload.businessType);
+    target.secondaryPhone = stringOrNull(payload.secondaryPhone);
     target.email = stringOrNull(payload.email) ?? fallbackEmail ?? ctx.email ?? null;
     target.phone = stringOrNull(payload.phone);
     target.gst = stringOrNull(payload.gst);

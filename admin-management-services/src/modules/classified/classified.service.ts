@@ -89,7 +89,7 @@ export class ClassifiedAdminService {
     const city = await this.requireCity(dto.cityId!);
     const saved = await repo.save(repo.create({ cityId: city.id, name: dto.name!.trim(), postalCode: dto.postalCode?.trim() || null, isActive: dto.isActive ?? true, metadata: dto.metadata ?? null }));
     await this.audit.log({ actorSub, action: 'CREATE', entityType: 'AvailableArea', entityId: saved.id, ipAddress: ip ?? null });
-    return { ...saved, cityName: city.name };
+    return Object.assign(saved, { cityName: city.name });
   }
   async updateArea(id: string, dto: UpsertAvailableAreaDto, actorSub: string, ip: string | undefined): Promise<AvailableArea & { cityName: string | null }> {
     const repo = AppDataSource.getRepository(AvailableArea); const row = await repo.findOne({ where: { id } }); if (!row) throw new Error('AvailableArea not found');
@@ -97,7 +97,7 @@ export class ClassifiedAdminService {
     if (dto.cityId !== undefined) { const city = await this.requireCity(dto.cityId); row.cityId = city.id; cityName = city.name; }
     else if (row.cityId) { cityName = (await this.requireCity(row.cityId)).name; }
     if (dto.name !== undefined) row.name = dto.name.trim(); if (dto.postalCode !== undefined) row.postalCode = dto.postalCode?.trim() || null; if (dto.isActive !== undefined) row.isActive = dto.isActive; if (dto.metadata !== undefined) row.metadata = dto.metadata;
-    const saved = await repo.save(row); await this.audit.log({ actorSub, action: 'UPDATE', entityType: 'AvailableArea', entityId: id, metadata: { changes: dto }, ipAddress: ip ?? null }); return { ...saved, cityName };
+    const saved = await repo.save(row); await this.audit.log({ actorSub, action: 'UPDATE', entityType: 'AvailableArea', entityId: id, metadata: { changes: dto }, ipAddress: ip ?? null }); return Object.assign(saved, { cityName });
   }
   async deleteArea(id: string, actorSub: string, ip: string | undefined): Promise<void> {
     const repo = AppDataSource.getRepository(AvailableArea); const row = await repo.findOne({ where: { id } }); if (!row) throw new Error('AvailableArea not found');

@@ -30,6 +30,9 @@ export class CatalogVendor {
   @Column({ name: 'owner_name', type: 'varchar', length: 255 })
   ownerName!: string;
 
+  @Column({ name: 'business_type', type: 'varchar', length: 64, nullable: true })
+  businessType!: string | null;
+
   @Column({ type: 'varchar', length: 64, nullable: true })
   gst!: string | null;
 
@@ -39,6 +42,9 @@ export class CatalogVendor {
   @Column({ type: 'varchar', length: 32, nullable: true })
   @Index()
   phone!: string | null;
+
+  @Column({ name: 'secondary_phone', type: 'varchar', length: 32, nullable: true })
+  secondaryPhone!: string | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   @Index()

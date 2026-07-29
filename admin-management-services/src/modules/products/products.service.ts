@@ -44,7 +44,7 @@ export class ProductsAdminService {
     const row = await AppDataSource.getRepository(Product).findOne({ where: { id } });
     if (!row) return null;
     const vars = await this.variations.listByProductId(id);
-    return { ...row, variations: vars.map(serializeProductVariation) };
+    return Object.assign(row, { variations: vars.map(serializeProductVariation) });
   }
 
   async getProductRequest(id: string): Promise<ProductRequest | null> {

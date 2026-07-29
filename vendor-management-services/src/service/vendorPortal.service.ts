@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Vendor } from '../entities/Vendor';
 import { Order } from '../entities/Order';
@@ -23,23 +24,34 @@ function metaRecord(m: unknown): Record<string, unknown> {
   return m as Record<string, unknown>;
 }
 
-function normalizeSettlementRow(row: Settlement): Settlement {
+function normalizeSettlementRow(row: Settlement, order?: Order): Settlement {
   const meta = metaRecord(row.metadata);
+  const orderMeta = metaRecord(order?.metadata);
+  const orderTotals = metaRecord(orderMeta.totals);
   const displayRef =
     (typeof meta.displayRef === 'string' && meta.displayRef.trim()) ||
     (typeof meta.settlementCode === 'string' && meta.settlementCode.trim()) ||
     `STL-${String(row.id).slice(0, 8).toUpperCase()}`;
   const orderRef =
+    (order?.orderRef && String(order.orderRef).trim()) ||
     (typeof meta.orderRef === 'string' && meta.orderRef.trim()) ||
     (typeof meta.order_ref === 'string' && meta.order_ref.trim()) ||
     (row.orderId ? `ORD-${String(row.orderId).slice(0, 8).toUpperCase()}` : '');
-  const gross = meta.gross ?? meta.grossAmount ?? meta.orderTotal;
-  const commission = meta.commission ?? meta.commissionAmount ?? meta.platformFee;
+  const gross =
+    order?.totalAmount ??
+    meta.vendorSubtotal ??
+    meta.gross ??
+    meta.grossAmount ??
+    meta.orderTotal ??
+    orderTotals.grandTotal;
+  const commission =
+    meta.commissionTotal ?? meta.commission ?? meta.commissionAmount ?? meta.platformFee;
   row.metadata = {
     ...meta,
     displayRef,
     settlementCode: displayRef,
     orderRef: orderRef || meta.orderRef,
+    orderStatus: order?.status ?? meta.orderStatus,
     gross: gross ?? meta.gross,
     commission: commission ?? meta.commission,
   };
@@ -120,11 +132,27 @@ export class VendorPortalService {
       if (!row || row.vendorId !== vendorId) throw new Error('Order not found');
       const prevStatus = String(row.status || 'created').toLowerCase();
       const nextStatus = dto.status === undefined ? prevStatus : String(dto.status).toLowerCase();
-      if (['delivered', 'completed', 'cancelled', 'canceled', 'refunded', 'returned'].includes(prevStatus) && nextStatus !== prevStatus) {
+      if (['completed', 'cancelled', 'canceled', 'refunded', 'returned'].includes(prevStatus) && nextStatus !== prevStatus) {
         throw new Error(`Order cannot be changed from terminal status ${prevStatus}`);
       }
       const allowedStatuses = new Set(['placed', 'created', 'pending', 'paid', 'accepted', 'in_progress', 'processing', 'shipped', 'out_for_delivery', 'delivered', 'completed', 'cancelled']);
       if (!allowedStatuses.has(nextStatus)) throw new Error(`Unsupported order status ${nextStatus}`);
+      const transitions: Record<string, Set<string>> = {
+        placed: new Set(['accepted', 'cancelled']),
+        created: new Set(['accepted', 'cancelled']),
+        pending: new Set(['accepted', 'cancelled']),
+        paid: new Set(['accepted', 'cancelled']),
+        new: new Set(['accepted', 'cancelled']),
+        accepted: new Set(['in_progress', 'processing', 'cancelled']),
+        in_progress: new Set(['shipped', 'cancelled']),
+        processing: new Set(['shipped', 'cancelled']),
+        shipped: new Set(['out_for_delivery', 'delivered']),
+        out_for_delivery: new Set(['delivered']),
+        delivered: new Set(['completed']),
+      };
+      if (nextStatus !== prevStatus && !transitions[prevStatus]?.has(nextStatus)) {
+        throw new Error(`Order cannot move from ${prevStatus} to ${nextStatus}`);
+      }
       const cancellableStatuses = new Set(['created', 'placed', 'pending', 'paid', 'accepted', 'processing', 'in_progress', 'new']);
       if (nextStatus === 'cancelled' && !cancellableStatuses.has(prevStatus)) {
         throw new Error('This order can no longer be cancelled');
@@ -388,7 +416,9 @@ export class VendorPortalService {
   ) {
     const qb = AppDataSource.getRepository(Settlement)
       .createQueryBuilder('s')
-      .where('s.vendorId = :vendorId', { vendorId });
+      .innerJoin(Order, 'o', 'o.id = s.orderId')
+      .where('o.vendorId = :vendorId', { vendorId })
+      .andWhere('s.settlementType = :settlementType', { settlementType: 'cash' });
 
     const status = (filters?.status || '').trim();
     if (status && status !== 'all') qb.andWhere('s.status = :status', { status });
@@ -403,20 +433,36 @@ export class VendorPortalService {
     if (q) {
       const like = `%${q}%`;
       qb.andWhere(
-        `(s.id LIKE :like OR s.orderId LIKE :like OR ${jsonText('s.metadata', 'orderRef')} LIKE :like OR ${jsonText('s.metadata', 'settlementCode')} LIKE :like)`,
+        `(s.id LIKE :like OR s.orderId LIKE :like OR o.orderRef LIKE :like OR ${jsonText('s.metadata', 'orderRef')} LIKE :like OR ${jsonText('s.metadata', 'settlementCode')} LIKE :like)`,
         { like },
       );
     }
 
     qb.orderBy('s.createdAt', 'DESC').take(limit).skip(offset);
     const [items, total] = await qb.getManyAndCount();
-    return { items: items.map(normalizeSettlementRow), total, limit, offset };
+    const orderIds = items.map((item) => item.orderId).filter((id): id is string => Boolean(id));
+    const orders = orderIds.length
+      ? await AppDataSource.getRepository(Order).find({ where: { id: In(orderIds) } })
+      : [];
+    const ordersById = new Map(orders.map((order) => [order.id, order]));
+    return {
+      items: items.map((item) =>
+        normalizeSettlementRow(item, item.orderId ? ordersById.get(item.orderId) : undefined),
+      ),
+      total,
+      limit,
+      offset,
+    };
   }
 
   async getSettlementForVendor(vendorId: string, settlementId: string): Promise<Settlement | null> {
     const row = await AppDataSource.getRepository(Settlement).findOne({ where: { id: settlementId } });
-    if (!row || row.vendorId !== vendorId) return null;
-    return normalizeSettlementRow(row);
+    if (!row || row.settlementType !== 'cash' || !row.orderId) return null;
+    const order = await AppDataSource.getRepository(Order).findOne({
+      where: { id: row.orderId, vendorId },
+    });
+    if (!order) return null;
+    return normalizeSettlementRow(row, order);
   }
 
   async getRatingSummaryForVendor(vendorId: string): Promise<{

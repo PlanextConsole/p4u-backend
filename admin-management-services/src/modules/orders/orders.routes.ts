@@ -154,6 +154,18 @@ export function createOrdersAdminRoutes(): Router {
   r.post('/Settlements', createSettlement);
   r.post('/settlements', createSettlement);
 
+  const deleteSettlement = async (req: Request, res: Response) => {
+    try {
+      await svc.deleteSettlement(req.params.id, getAuthSub(req), clientIp(req));
+      res.json({ deleted: true, id: req.params.id });
+    } catch (e: any) {
+      const status = e.message === 'Settlement not found' ? 404 : 400;
+      res.status(status).json({ message: e.message });
+    }
+  };
+  r.delete('/Settlements/individual/:id', deleteSettlement);
+  r.delete('/settlements/individual/:id', deleteSettlement);
+
   r.patch('/Settlements/individual/:id', async (req: Request, res: Response) => {
     try {
       const dto = plainToClass(UpdateSettlementDto, req.body);

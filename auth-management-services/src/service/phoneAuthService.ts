@@ -143,8 +143,8 @@ export interface CustomerRegistrationPayload {
 export interface VendorRegistrationPayload {
   /** Firebase Phone Auth ID token from the browser SDK. */
   firebaseIdToken: string;
-  vendorKind: 'service' | 'product';
-  vendorType: 'SERVICE' | 'PRODUCT';
+  vendorKind: 'service' | 'product' | 'both';
+  vendorType: 'SERVICE' | 'PRODUCT' | 'BOTH';
   ownerName: string;
   businessName: string;
   email?: string | null;
@@ -166,12 +166,14 @@ export interface VendorRegistrationPayload {
  * login after approval.
  */
 export interface VendorPendingRegistrationPayload {
-  vendorKind: 'service' | 'product';
-  vendorType: 'SERVICE' | 'PRODUCT';
-  ownerName: string;
-  businessName: string;
+  vendorKind: 'service' | 'product' | 'both';
+  vendorType: 'SERVICE' | 'PRODUCT' | 'BOTH';
+  ownerName?: string;
+  businessName?: string;
+  businessType?: string | null;
   email?: string | null;
-  phone: string;
+  phone?: string | null;
+  secondaryPhone?: string | null;
   gst?: string | null;
   pan?: string | null;
   categoriesJson?: unknown;
@@ -361,6 +363,38 @@ export class PhoneAuthService {
     return { registered: false, status: 'not_registered' };
   }
 
+  async vendorEmailStatus(
+    email: string,
+  ): Promise<{ available: boolean; status: VendorAccountStatus }> {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      throw new Error('A valid email address is required');
+    }
+
+    const vendor = await this.catalogVendorRepo.findByEmail(normalized);
+    if (vendor) {
+      const status = String(vendor.status || '').toLowerCase();
+      if (status === 'rejected' || status === 'suspended') {
+        return { available: false, status: 'rejected' };
+      }
+      if (status === 'active' || status === 'approved') {
+        return { available: false, status: 'approved' };
+      }
+      return { available: false, status: 'pending' };
+    }
+
+    const request = await this.vendorRequestRepo.findLatestByEmail(normalized);
+    if (request) {
+      const status = String(request.status || '').toLowerCase();
+      if (status === 'rejected') return { available: false, status: 'rejected' };
+      if (status === 'approved') return { available: false, status: 'approved' };
+      return { available: false, status: 'pending' };
+    }
+
+    const user = await this.userRepo.findByEmail(normalized);
+    if (user) return { available: false, status: 'approved' };
+    return { available: true, status: 'not_registered' };
+  }
   /**
    * No-OTP vendor self-registration. Records a pending vendor_signup_requests
    * row that admin reviews. Deliberately creates no Keycloak user (that happens
@@ -370,33 +404,47 @@ export class PhoneAuthService {
   async registerVendorPending(
     payload: VendorPendingRegistrationPayload,
   ): Promise<{ status: 'pending'; message: string }> {
-    const ownerName = (payload.ownerName || '').trim();
-    const businessName = (payload.businessName || '').trim();
-    if (!ownerName) throw new Error('Owner name is required');
-    if (!businessName) throw new Error('Business name is required');
-
     const digits = String(payload.phone || '').replace(/\D/g, '');
-    if (digits.length < 10) throw new Error('A valid 10-digit mobile number is required');
-    const e164 = `+91${digits.slice(-10)}`;
+    if (digits.length > 0 && digits.length < 10) {
+      throw new Error('Enter a valid 10-digit mobile number or leave it empty');
+    }
+    const e164 = digits.length >= 10 ? `+91${digits.slice(-10)}` : null;
+    const email = String(payload.email || '').trim().toLowerCase();
 
-    // Already a real vendor (approved or in catalog)?
-    const existingVendor = await this.catalogVendorRepo.findByPhone(e164);
-    if (existingVendor) {
-      const st = (existingVendor.status || '').toLowerCase();
-      if (st === 'rejected' || st === 'suspended') throw new Error(VENDOR_REJECTED_MESSAGE);
-      throw new Error('A vendor account already exists for this phone. Please sign in instead.');
+    if (e164) {
+      const existingVendor = await this.catalogVendorRepo.findByPhone(e164);
+      if (existingVendor) {
+        const st = (existingVendor.status || '').toLowerCase();
+        if (st === 'rejected' || st === 'suspended') throw new Error(VENDOR_REJECTED_MESSAGE);
+        throw new Error('A vendor account already exists for this phone. Please sign in instead.');
+      }
+    }
+
+    const [phoneRequest, emailRequest] = await Promise.all([
+      e164 ? this.vendorRequestRepo.findLatestByPhone(e164) : Promise.resolve(null),
+      email ? this.vendorRequestRepo.findLatestByEmail(email) : Promise.resolve(null),
+    ]);
+    if (phoneRequest && emailRequest && phoneRequest.id !== emailRequest.id) {
+      throw new Error('The entered phone and email belong to different vendor applications.');
+    }
+    const existingReq = phoneRequest ?? emailRequest;
+
+    if (email) {
+      const [vendorByEmail, userByEmail] = await Promise.all([
+        this.catalogVendorRepo.findByEmail(email),
+        this.userRepo.findByEmail(email),
+      ]);
+      if (vendorByEmail || userByEmail) {
+        throw new Error('An account already exists with this email.');
+      }
     }
 
     const requestPayload = this.buildVendorRequestPayload(payload, e164);
-
-    // Re-submission of an existing request for this phone: update in place
-    // rather than stacking duplicates in the admin queue.
-    const existingReq = await this.vendorRequestRepo.findLatestByPhone(e164);
     if (existingReq) {
       const rs = (existingReq.status || '').toLowerCase();
       if (rs === 'rejected') throw new Error(VENDOR_REJECTED_MESSAGE);
       if (rs === 'approved') {
-        throw new Error('A vendor account already exists for this phone. Please sign in instead.');
+        throw new Error('A vendor account already exists for these details. Please sign in instead.');
       }
       existingReq.payload = requestPayload;
       await this.vendorRequestRepo.save(existingReq);
@@ -410,19 +458,20 @@ export class PhoneAuthService {
     await this.vendorRequestRepo.save(row);
     return { status: 'pending', message: 'Registration request submitted.' };
   }
-
   private buildVendorRequestPayload(
     payload: VendorPendingRegistrationPayload,
-    e164: string,
+    e164: string | null,
   ): Record<string, unknown> {
-    const vendorKind = payload.vendorKind === 'service' ? 'service' : 'product';
-    const vendorType = payload.vendorType === 'SERVICE' ? 'SERVICE' : 'PRODUCT';
+    const vendorKind = payload.vendorKind === 'both' ? 'both' : payload.vendorKind === 'service' ? 'service' : 'product';
+    const vendorType = payload.vendorType === 'BOTH' ? 'BOTH' : payload.vendorType === 'SERVICE' ? 'SERVICE' : 'PRODUCT';
     return {
       source: 'vendor-web-no-otp',
       ownerName: (payload.ownerName || '').trim(),
       businessName: (payload.businessName || '').trim(),
-      email: (payload.email || '')?.toString().trim() || null,
+      businessType: nullableTrim(payload.businessType),
+      email: (payload.email || '')?.toString().trim().toLowerCase() || null,
       phone: e164,
+      secondaryPhone: nullableTrim(payload.secondaryPhone),
       vendorKind,
       vendorType,
       gst: nullableTrim(payload.gst),
@@ -529,7 +578,7 @@ export class PhoneAuthService {
       return this.loginAsKeycloakUser(existing.keycloakUserId);
     }
 
-    const email = (payload.email || '').trim() || null;
+    const email = (payload.email || '').trim().toLowerCase() || null;
 
     // Username for Keycloak: phone (no plus, e.g. "919876543210") — unique
     // and stable. Email is a separate optional attribute.
@@ -786,9 +835,16 @@ export class PhoneAuthService {
     const businessName = (payload.businessName || '').trim();
     if (!ownerName) throw new Error('Owner name is required');
     if (!businessName) throw new Error('Business name is required');
+    const requestedKind = payload.vendorKind === 'both' ? 'both' : payload.vendorKind === 'service' ? 'service' : 'product';
+    if (requestedKind !== 'service' && !hasRegistrationSelection(payload.categoriesJson)) {
+      throw new Error('Product category is required');
+    }
+    if (requestedKind !== 'product' && !hasRegistrationSelection(payload.servicesJson)) {
+      throw new Error('Service selection is required');
+    }
 
-    const vendorKind = payload.vendorKind === 'service' ? 'service' : 'product';
-    const vendorType = payload.vendorType === 'SERVICE' ? 'SERVICE' : 'PRODUCT';
+    const vendorKind = payload.vendorKind === 'both' ? 'both' : payload.vendorKind === 'service' ? 'service' : 'product';
+    const vendorType = payload.vendorType === 'BOTH' ? 'BOTH' : payload.vendorType === 'SERVICE' ? 'SERVICE' : 'PRODUCT';
 
     // Race-protection: if a vendor with this phone already exists and is
     // linked to a Keycloak user, we treat this as "already registered" and
@@ -801,7 +857,7 @@ export class PhoneAuthService {
       );
     }
 
-    const email = (payload.email || '').trim() || null;
+    const email = (payload.email || '').trim().toLowerCase() || null;
     if (email) {
       const byEmail = await this.keycloakAdmin.users.find({ email, exact: true });
       if (byEmail && byEmail.length > 0) {
@@ -1089,6 +1145,16 @@ export class PhoneAuthService {
   }
 }
 
+function hasRegistrationSelection(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some((entry) => {
+    if (typeof entry === 'string' || typeof entry === 'number') return String(entry).trim().length > 0;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const row = entry as Record<string, unknown>;
+    return [row.id, row.value, row.name, row.slug, row.serviceId, row.categoryId]
+      .some((candidate) => candidate != null && String(candidate).trim().length > 0);
+  });
+}
 function nullableTrim(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const trimmed = v.trim();

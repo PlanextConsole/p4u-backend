@@ -169,6 +169,20 @@ export const createAuthRoutes = (
     },
   );
 
+  /** Public, rate-limited vendor email availability check used by registration forms. */
+  router.post(
+    '/public/vendor/email-status',
+    publicLoginLimiter,
+    async (req: Request, res: Response) => {
+      try {
+        const email = typeof req.body?.email === 'string' ? req.body.email : '';
+        const result = await phoneAuthService.vendorEmailStatus(email);
+        return res.json(result);
+      } catch (error: any) {
+        return res.status(400).json({ message: mapCaughtErrorToMessage(error) });
+      }
+    },
+  );
   /**
    * OTP-LAST vendor signup. The vendor-web wizard collects every business
    * field first, runs Firebase phone verification at submit time, then posts
@@ -191,13 +205,17 @@ export const createAuthRoutes = (
         const auth = await phoneAuthService.registerVendor({
           firebaseIdToken: dto.firebaseIdToken,
           vendorKind:
-            String(dto.vendorKind || 'product').toLowerCase() === 'service'
-              ? 'service'
-              : 'product',
+            String(dto.vendorKind || 'product').toLowerCase() === 'both'
+              ? 'both'
+              : String(dto.vendorKind || 'product').toLowerCase() === 'service'
+                ? 'service'
+                : 'product',
           vendorType:
-            String(dto.vendorType || 'PRODUCT').toUpperCase() === 'SERVICE'
-              ? 'SERVICE'
-              : 'PRODUCT',
+            String(dto.vendorType || 'PRODUCT').toUpperCase() === 'BOTH'
+              ? 'BOTH'
+              : String(dto.vendorType || 'PRODUCT').toUpperCase() === 'SERVICE'
+                ? 'SERVICE'
+                : 'PRODUCT',
           ownerName: dto.ownerName,
           businessName: dto.businessName,
           email: dto.email ?? null,
@@ -238,17 +256,23 @@ export const createAuthRoutes = (
         }
         const result = await phoneAuthService.registerVendorPending({
           vendorKind:
-            String(dto.vendorKind || 'product').toLowerCase() === 'service'
-              ? 'service'
-              : 'product',
+            String(dto.vendorKind || 'product').toLowerCase() === 'both'
+              ? 'both'
+              : String(dto.vendorKind || 'product').toLowerCase() === 'service'
+                ? 'service'
+                : 'product',
           vendorType:
-            String(dto.vendorType || 'PRODUCT').toUpperCase() === 'SERVICE'
-              ? 'SERVICE'
-              : 'PRODUCT',
+            String(dto.vendorType || 'PRODUCT').toUpperCase() === 'BOTH'
+              ? 'BOTH'
+              : String(dto.vendorType || 'PRODUCT').toUpperCase() === 'SERVICE'
+                ? 'SERVICE'
+                : 'PRODUCT',
           ownerName: dto.ownerName,
           businessName: dto.businessName,
+          businessType: dto.businessType ?? null,
           email: dto.email ?? null,
           phone: dto.phone,
+          secondaryPhone: dto.secondaryPhone ?? null,
           gst: dto.gst ?? null,
           pan: dto.pan ?? null,
           categoriesJson: dto.categoriesJson ?? null,

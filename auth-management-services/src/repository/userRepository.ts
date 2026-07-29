@@ -14,7 +14,12 @@ export class UserRepository {
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return await this.repository.findOne({ where: { email } });
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return this.repository
+      .createQueryBuilder('user')
+      .where('LOWER(user.email) = :email', { email: normalized })
+      .getOne();
   }
 
   async findByKeycloakId(keycloakId: string): Promise<User | null> {

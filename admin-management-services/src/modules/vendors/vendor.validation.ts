@@ -93,10 +93,10 @@ export function assertCreateVendorRules(dto: CreateVendorDto): void {
     errors.push('Max redemption percent must be between 0 and 100');
   }
 
-  if (dto.vendorKind === 'product' && !hasCategorySelection(dto.categoriesJson)) {
+  if ((dto.vendorKind === 'product' || dto.vendorKind === 'both') && !hasCategorySelection(dto.categoriesJson)) {
     errors.push('Vendor category is required for product vendors');
   }
-  if (dto.vendorKind === 'service' && !hasServiceSelection(dto.servicesJson)) {
+  if ((dto.vendorKind === 'service' || dto.vendorKind === 'both') && !hasServiceSelection(dto.servicesJson)) {
     errors.push('At least one service is required for service vendors');
   }
 
@@ -150,10 +150,10 @@ export function assertUpdateVendorRules(dto: UpdateVendorDto, existing: { vendor
     errors.push('State code must be 2 digits');
   }
 
-  if (kind === 'product' && dto.categoriesJson !== undefined && !hasCategorySelection(dto.categoriesJson)) {
+  if ((kind === 'product' || kind === 'both') && dto.categoriesJson !== undefined && !hasCategorySelection(dto.categoriesJson)) {
     errors.push('Vendor category is required for product vendors');
   }
-  if (kind === 'service' && dto.servicesJson !== undefined && !hasServiceSelection(dto.servicesJson)) {
+  if ((kind === 'service' || kind === 'both') && dto.servicesJson !== undefined && !hasServiceSelection(dto.servicesJson)) {
     errors.push('At least one service is required for service vendors');
   }
 

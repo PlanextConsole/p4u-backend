@@ -128,7 +128,8 @@ export class VendorCatalogService {
   async attachUnitsSold(vendorId: string, items: Product[]): Promise<(Product & { unitsSold: number })[]> {
     const ids = items.map((p) => p.id);
     const counts = await countUnitsSoldByProduct(vendorId, ids);
-    return items.map((p) => ({ ...p, unitsSold: counts[p.id] || 0 }));
+    // Preserve the TypeORM entity prototype so the response remains a Product.
+    return items.map((p) => Object.assign(p, { unitsSold: counts[p.id] || 0 }));
   }
 
   async getProductForVendor(vendorId: string, productId: string): Promise<(Product & { variations: ReturnType<typeof serializeVariation>[] }) | null> {

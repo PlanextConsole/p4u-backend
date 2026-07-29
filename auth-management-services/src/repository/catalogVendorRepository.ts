@@ -31,6 +31,14 @@ export class CatalogVendorRepository {
     return null;
   }
 
+  async findByEmail(email: string): Promise<CatalogVendor | null> {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return this.repository
+      .createQueryBuilder('vendor')
+      .where('LOWER(vendor.email) = :email', { email: normalized })
+      .getOne();
+  }
   async save(row: CatalogVendor): Promise<CatalogVendor> {
     return this.repository.save(row);
   }

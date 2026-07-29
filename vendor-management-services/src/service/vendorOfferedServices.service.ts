@@ -27,7 +27,7 @@ export class VendorOfferedServicesService {
     if (!v) throw new Error('Vendor not found');
     const vk = String(v.vendorKind || '').toLowerCase();
     const vt = String(v.vendorType || '').toUpperCase();
-    if (vk !== 'service' && vt !== 'SERVICE') {
+    if (!['service', 'both'].includes(vk) && !['SERVICE', 'BOTH'].includes(vt)) {
       throw new Error('Only service vendors can manage service offerings');
     }
   }

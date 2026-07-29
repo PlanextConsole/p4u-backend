@@ -20,6 +20,15 @@ export class VendorRegistrationRequestRepository {
       .getOne();
   }
 
+  async findLatestByEmail(email: string): Promise<VendorRegistrationRequest | null> {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return null;
+    return this.repository
+      .createQueryBuilder('r')
+      .where(`LOWER(${jsonText('r.payload', 'email')}) = :email`, { email: normalized })
+      .orderBy('r.createdAt', 'DESC')
+      .getOne();
+  }
   /** Latest request (any status) authored by a given Keycloak user. */
   async findLatestByKeycloakUserId(
     keycloakUserId: string,

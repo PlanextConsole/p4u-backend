@@ -305,7 +305,7 @@ export class FileUploadsAdminService {
   private async processVendorRow(r: Record<string, string>, actorSub: string, ip: string | undefined): Promise<void> {
     const id = pick(r, 'id');
     const vkRaw = (pick(r, 'vendor_kind', 'vendor_type', 'vendorkind') || 'product').toLowerCase();
-    const vendorKind = vkRaw === 'service' ? 'service' : 'product';
+    const vendorKind = vkRaw === 'both' ? 'both' : vkRaw === 'service' ? 'service' : 'product';
 
     if (id && id.length >= 32) {
       const dto = plainToClass(UpdateVendorDto, {

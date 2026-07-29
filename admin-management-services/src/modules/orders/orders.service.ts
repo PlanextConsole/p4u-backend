@@ -284,6 +284,27 @@ export class OrdersAdminService {
     return { total, revenue, active, completed };
   }
 
+  async deleteSettlement(id: string, actorSub: string, ip: string | undefined): Promise<void> {
+    const repo = AppDataSource.getRepository(Settlement);
+    const row = await repo.findOne({ where: { id } });
+    if (!row) throw new Error('Settlement not found');
+    await repo.remove(row);
+    await this.audit.log({
+      actorSub,
+      action: 'DELETE',
+      entityType: 'Settlement',
+      entityId: id,
+      metadata: {
+        vendorId: row.vendorId,
+        orderId: row.orderId,
+        settlementType: row.settlementType,
+        status: row.status,
+        amount: row.amount,
+      },
+      ipAddress: ip ?? null,
+    });
+  }
+
   async updateSettlement(id: string, dto: UpdateSettlementDto, actorSub: string, ip: string | undefined): Promise<Settlement> {
     const repo = AppDataSource.getRepository(Settlement);
     const row = await repo.findOne({ where: { id } });

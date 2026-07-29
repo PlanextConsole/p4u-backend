@@ -30,8 +30,8 @@ function publicRestaurant<T extends Record<string, unknown>>(row: T) {
   return safe;
 }
 
-function paging(req: Request) {
-  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), 100);
+function paging(req: Request, maxLimit = 100) {
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || 20), 10) || 20, 1), maxLimit);
   const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
   return { limit, offset };
 }
@@ -284,7 +284,7 @@ export function createFoodProtectedRoutes(): Router {
     const vendorId = await vendorIdForRequest(req, res);
     if (!vendorId) return;
     try {
-      const { limit, offset } = paging(req);
+      const { limit, offset } = paging(req, 500);
       const result = await service.listVendorOrders(vendorId, req.query.status ? String(req.query.status) : undefined, limit, offset);
       sendSuccess(res, result);
     } catch (error) { errorResponse(res, error); }

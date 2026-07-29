@@ -1,10 +1,8 @@
-import { IsEmail, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmail, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /**
- * No-OTP vendor self-registration. The wizard submits business details only;
- * we record a pending vendor_signup_requests row for admin review. No phone
- * verification and no Keycloak user are created here — the vendor proves phone
- * ownership via OTP only at LOGIN, after an admin has approved them.
+ * No-OTP vendor self-registration. Every profile field is optional at this
+ * stage; admin can request or complete missing information during review.
  */
 export class VendorRegisterRequest {
   @IsOptional()
@@ -15,24 +13,34 @@ export class VendorRegisterRequest {
   @IsString()
   vendorType?: string;
 
-  @IsNotEmpty({ message: 'ownerName is required' })
+  @IsOptional()
   @IsString()
   @MaxLength(200)
-  ownerName!: string;
+  ownerName?: string;
 
-  @IsNotEmpty({ message: 'businessName is required' })
+  @IsOptional()
   @IsString()
   @MaxLength(200)
-  businessName!: string;
+  businessName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  businessType?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  secondaryPhone?: string | null;
 
   @IsOptional()
   @IsEmail({}, { message: 'email must be a valid email' })
   email?: string | null;
 
-  @IsNotEmpty({ message: 'phone is required' })
+  @IsOptional()
   @IsString()
   @MaxLength(32)
-  phone!: string;
+  phone?: string | null;
 
   @IsOptional()
   @IsString()

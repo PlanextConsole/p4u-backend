@@ -252,7 +252,7 @@ export class CustomerAdminService {
       if (k != null) map.set(String(k), parseInt(String(cnt), 10));
     }
     return {
-      items: items.map(o => ({ ...o, customerCount: map.get(o.id) ?? 0 })),
+      items: items.map(o => Object.assign(o, { customerCount: map.get(o.id) ?? 0 })),
       totalCustomers,
     };
   }
@@ -261,7 +261,7 @@ export class CustomerAdminService {
     const o = await this.getOccupation(id);
     if (!o) return null;
     const customerCount = await AppDataSource.getRepository(Customer).count({ where: { occupationId: id } });
-    return { ...o, customerCount };
+    return Object.assign(o, { customerCount });
   }
 
   async createOccupation(

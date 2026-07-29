@@ -133,7 +133,7 @@ function mapVendorToPendingApplication(v: Vendor): VendorPendingApplication {
     email: v.email,
     phone: v.phone,
     vendorKind: kind,
-    vendorType: kind === 'service' ? 'SERVICE' : 'PRODUCT',
+    vendorType: vendorTypeFromKind(kind),
     categoryLabel:
       kind === 'service'
         ? firstJsonLabel(v.servicesJson)
@@ -610,26 +610,38 @@ export class VendorAdminService {
 
       const vt = String(payload.vendorType ?? payload.vendor_type ?? '').trim().toUpperCase();
       const kindRaw =
-        vt === 'SERVICE'
-          ? 'service'
-          : vt === 'PRODUCT'
-            ? 'product'
-            : String(payload.vendorKind ?? payload.vendor_kind ?? 'product').toLowerCase();
-      const approvedKind = kindRaw === 'service' ? 'service' : 'product';
+        vt === 'BOTH'
+          ? 'both'
+          : vt === 'SERVICE'
+            ? 'service'
+            : vt === 'PRODUCT'
+              ? 'product'
+              : String(payload.vendorKind ?? payload.vendor_kind ?? 'product').toLowerCase();
+      const approvedKind: VendorKind =
+        kindRaw === 'both' ? 'both' : kindRaw === 'service' ? 'service' : 'product';
 
       const vendor = vendorRepo.create({
         businessName,
         ownerName,
         email: emailRaw != null && String(emailRaw).trim() !== '' ? String(emailRaw).trim() : null,
         phone: phoneRaw != null && String(phoneRaw).trim() !== '' ? String(phoneRaw).trim() : null,
+        secondaryPhone:
+          payload.secondaryPhone != null && String(payload.secondaryPhone).trim() !== ''
+            ? String(payload.secondaryPhone).trim()
+            : null,
         status: 'active',
         kycStatus: 'not_started',
+        gst: payload.gst != null && String(payload.gst).trim() !== '' ? String(payload.gst).trim() : null,
+        pan: payload.pan != null && String(payload.pan).trim() !== '' ? String(payload.pan).trim() : null,
         categoriesJson: payload.categoriesJson ?? payload.categories ?? null,
+        servicesJson: payload.servicesJson ?? payload.services ?? null,
         addressJson: (payload.addressJson as Record<string, unknown> | null) ?? (payload.address as Record<string, unknown> | null) ?? null,
+        documentsJson: (payload.documentsJson as Record<string, unknown> | null) ?? null,
+        bankJson: (payload.bankJson as Record<string, unknown> | null) ?? null,
         notes: dto.notes != null ? String(dto.notes) : null,
         keycloakUserId: keycloakForCreate != null && String(keycloakForCreate).trim() !== '' ? String(keycloakForCreate).trim() : null,
         vendorKind: approvedKind,
-        vendorType: approvedKind === 'service' ? 'SERVICE' : 'PRODUCT',
+        vendorType: vendorTypeFromKind(approvedKind),
       });
       await vendorRepo.save(vendor);
       const appliedCode = String(payload.appliedReferralCode ?? payload.applied_referral_code ?? '').trim();

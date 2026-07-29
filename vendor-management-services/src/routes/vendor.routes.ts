@@ -26,11 +26,11 @@ import { createVendorMediaUpload, vendorMediaPublicUrl } from '../config/vendorM
 import { vendorDocumentUpload, vendorDocumentPublicUrl } from '../config/vendorDocumentUpload';
 import { VendorSupportService } from '../service/vendorSupport.service';
 
-const parsePaging = (req: Request) => {
+const parsePaging = (req: Request, maxLimit = 100) => {
   const limitRaw = parseInt(String(req.query.limit ?? '20'), 10);
   const offsetRaw = parseInt(String(req.query.offset ?? '0'), 10);
   return {
-    limit: Number.isNaN(limitRaw) ? 20 : Math.min(Math.max(limitRaw, 1), 100),
+    limit: Number.isNaN(limitRaw) ? 20 : Math.min(Math.max(limitRaw, 1), maxLimit),
     offset: Number.isNaN(offsetRaw) ? 0 : Math.max(offsetRaw, 0),
   };
 };
@@ -258,7 +258,7 @@ export function createVendorRoutes(): Router {
     async (req: Request, res: Response) => {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
-      const { limit, offset } = parsePaging(req);
+      const { limit, offset } = parsePaging(req, 500);
       const status = req.query.status ? String(req.query.status) : undefined;
       const data = await svc.listOrdersForVendor(vendorId, status, limit, offset);
       sendSuccess(res, data);
@@ -322,7 +322,7 @@ export function createVendorRoutes(): Router {
     async (req: Request, res: Response) => {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
-      const { limit, offset } = parsePaging(req);
+      const { limit, offset } = parsePaging(req, 500);
       const status = req.query.status ? String(req.query.status) : undefined;
       try {
         const data = await bookingSvc.listForVendor(vendorId, limit, offset, status);
@@ -753,7 +753,7 @@ export function createVendorRoutes(): Router {
     async (req: Request, res: Response) => {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
-      const { limit, offset } = parsePaging(req);
+      const { limit, offset } = parsePaging(req, 500);
       const q = req.query.q ? String(req.query.q) : undefined;
       const status = req.query.status ? String(req.query.status) : 'all';
       const moderation = req.query.moderation ? String(req.query.moderation) : 'all';
@@ -845,7 +845,7 @@ export function createVendorRoutes(): Router {
     async (req: Request, res: Response) => {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
-      const { limit, offset } = parsePaging(req);
+      const { limit, offset } = parsePaging(req, 500);
       const q = req.query.q ? String(req.query.q) : undefined;
       const status = req.query.status ? String(req.query.status) : undefined;
       const from = req.query.from ? String(req.query.from) : undefined;
@@ -955,7 +955,7 @@ export function createVendorRoutes(): Router {
     async (req: Request, res: Response) => {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
-      const { limit, offset } = parsePaging(req);
+      const { limit, offset } = parsePaging(req, 500);
       const q = req.query.q ? String(req.query.q) : undefined;
       const typeRaw = String(req.query.type || 'all').toLowerCase();
       const type = typeRaw === 'images' || typeRaw === 'documents' ? typeRaw : 'all';
@@ -1140,7 +1140,7 @@ export function createVendorRoutes(): Router {
     async (req: Request, res: Response) => {
       const vendorId = await requireVendorId(req, res, svc);
       if (!vendorId) return;
-      const { limit, offset } = parsePaging(req);
+      const { limit, offset } = parsePaging(req, 500);
       const data = await dropshipSvc.listOrders(vendorId, limit, offset);
       sendSuccess(res, data);
     },
