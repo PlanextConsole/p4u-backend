@@ -30,6 +30,70 @@ export type CustomerReferralReportRow = {
   referredJoinedAt: Date | null;
 };
 
+type CouponAdminView = {
+  id: string;
+  code: string;
+  title: string;
+  status: string;
+  discountJson: Record<string, unknown>;
+  validFrom: Date | null;
+  validTo: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function couponAdminView(row: Coupon): CouponAdminView {
+  const metadata = objectValue(row.metadata);
+  return {
+    id: row.id,
+    code: row.code,
+    title: String(metadata.title || row.code),
+    status: row.status,
+    discountJson: {
+      type: row.type,
+      value: Number(row.value),
+      minOrderAmount: Number(row.minOrderAmount),
+      maxDiscount: row.maxDiscount === null ? null : Number(row.maxDiscount),
+      usageLimit: row.usageLimit,
+      usedCount: row.usedCount,
+      perUserLimit: row.perUserLimit,
+      applicableVendorIds: row.applicableVendorIds,
+      applicableCategoryIds: row.applicableCategoryIds,
+    },
+    validFrom: row.validFrom,
+    validTo: row.validUntil,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function applyDiscountJson(row: Coupon, value: unknown): void {
+  const discount = objectValue(value);
+  const type = String(discount.type || discount.discountType || row.type || 'percentage').toLowerCase();
+  row.type = type === 'flat' ? 'flat' : 'percentage';
+  row.value = String(discount.value ?? discount.amount ?? discount.discountValue ?? row.value ?? 0);
+  row.minOrderAmount = String(discount.minOrderAmount ?? discount.minOrder ?? row.minOrderAmount ?? 0);
+
+  const maxDiscount = optionalNumber(discount.maxDiscount);
+  if (discount.maxDiscount !== undefined) row.maxDiscount = maxDiscount === null ? null : String(maxDiscount);
+  if (discount.usageLimit !== undefined) row.usageLimit = optionalNumber(discount.usageLimit);
+  if (discount.perUserLimit !== undefined) row.perUserLimit = optionalNumber(discount.perUserLimit) ?? 1;
+  if (Array.isArray(discount.applicableVendorIds)) row.applicableVendorIds = discount.applicableVendorIds.map(String);
+  if (Array.isArray(discount.applicableCategoryIds)) row.applicableCategoryIds = discount.applicableCategoryIds.map(String);
+}
+
 export class CustomerAdminService {
   private audit = new AuditService();
   private platformConfig = new PlatformConfigAdminService();
@@ -117,26 +181,39 @@ export class CustomerAdminService {
     return row;
   }
 
-  async listAllCoupons(limit: number, offset: number): Promise<{ items: Coupon[]; total: number }> {
+  async listAllCoupons(limit: number, offset: number): Promise<{ items: CouponAdminView[]; total: number }> {
     const repo = AppDataSource.getRepository(Coupon);
-    const [items, total] = await repo.findAndCount({
+    const [rows, total] = await repo.findAndCount({
       order: { createdAt: 'DESC' },
       take: limit,
       skip: offset,
     });
-    return { items, total };
+    return { items: rows.map(couponAdminView), total };
   }
 
-  async createCoupon(dto: any, actorSub: string, ip: string | undefined): Promise<Coupon> {
+  async createCoupon(dto: any, actorSub: string, ip: string | undefined): Promise<CouponAdminView> {
+    const code = String(dto.code || '').trim().toUpperCase();
+    const title = String(dto.title || '').trim();
+    if (!code || !title) throw new Error('Code and title are required');
+
     const repo = AppDataSource.getRepository(Coupon);
     const row = repo.create({
-      code: dto.code,
-      title: dto.title,
+      code,
+      type: 'percentage',
+      value: '0',
+      minOrderAmount: '0',
+      maxDiscount: null,
+      usageLimit: null,
+      usedCount: 0,
+      perUserLimit: 1,
+      applicableVendorIds: null,
+      applicableCategoryIds: null,
       status: dto.status ?? 'active',
-      discountJson: dto.discountJson ?? null,
+      metadata: { title },
       validFrom: dto.validFrom ? new Date(dto.validFrom) : null,
-      validTo: dto.validTo ? new Date(dto.validTo) : null,
+      validUntil: dto.validTo ? new Date(dto.validTo) : null,
     });
+    applyDiscountJson(row, dto.discountJson);
     await repo.save(row);
     await this.audit.log({
       actorSub,
@@ -146,19 +223,19 @@ export class CustomerAdminService {
       metadata: { code: row.code },
       ipAddress: ip ?? null,
     });
-    return row;
+    return couponAdminView(row);
   }
 
-  async updateCoupon(id: string, dto: any, actorSub: string, ip: string | undefined): Promise<Coupon> {
+  async updateCoupon(id: string, dto: any, actorSub: string, ip: string | undefined): Promise<CouponAdminView> {
     const repo = AppDataSource.getRepository(Coupon);
     const row = await repo.findOne({ where: { id } });
     if (!row) throw new Error('Coupon not found');
-    if (dto.code !== undefined) row.code = dto.code;
-    if (dto.title !== undefined) row.title = dto.title;
+    if (dto.code !== undefined) row.code = String(dto.code).trim().toUpperCase();
+    if (dto.title !== undefined) row.metadata = { ...objectValue(row.metadata), title: String(dto.title).trim() };
     if (dto.status !== undefined) row.status = dto.status;
-    if (dto.discountJson !== undefined) row.discountJson = dto.discountJson;
+    if (dto.discountJson !== undefined) applyDiscountJson(row, dto.discountJson);
     if (dto.validFrom !== undefined) row.validFrom = dto.validFrom ? new Date(dto.validFrom) : null;
-    if (dto.validTo !== undefined) row.validTo = dto.validTo ? new Date(dto.validTo) : null;
+    if (dto.validTo !== undefined) row.validUntil = dto.validTo ? new Date(dto.validTo) : null;
     await repo.save(row);
     await this.audit.log({
       actorSub,
@@ -168,7 +245,7 @@ export class CustomerAdminService {
       metadata: { changes: dto },
       ipAddress: ip ?? null,
     });
-    return row;
+    return couponAdminView(row);
   }
 
   async deleteCoupon(id: string, actorSub: string, ip: string | undefined): Promise<void> {

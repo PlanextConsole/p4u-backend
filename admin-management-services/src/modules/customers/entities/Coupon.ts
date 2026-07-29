@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto';
 import { BeforeInsert, Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
-
 @Entity('commerce_coupons')
 export class Coupon {
   @PrimaryColumn({ type: 'varchar', length: 36 })
@@ -12,25 +11,49 @@ export class Coupon {
     if (!this.id) this.id = randomUUID();
   }
 
-  @Column({ type: 'varchar', length: 64 })
+  @Column({ type: 'varchar', length: 32, unique: true })
   @Index()
   code!: string;
 
-  @Column({ type: 'varchar', length: 255 })
-  title!: string;
+  @Column({ type: 'varchar', length: 32, default: 'percentage' })
+  type!: string;
+
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  value!: string;
+
+  @Column({ name: 'min_order_amount', type: 'decimal', precision: 12, scale: 2, default: 0 })
+  minOrderAmount!: string;
+
+  @Column({ name: 'max_discount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  maxDiscount!: string | null;
+
+  @Column({ name: 'usage_limit', type: 'int', nullable: true })
+  usageLimit!: number | null;
+
+  @Column({ name: 'used_count', type: 'int', default: 0 })
+  usedCount!: number;
+
+  @Column({ name: 'per_user_limit', type: 'int', default: 1 })
+  perUserLimit!: number;
+
+  @Column({ name: 'valid_from', type: 'timestamp', nullable: true })
+  validFrom!: Date | null;
+
+  @Column({ name: 'valid_until', type: 'timestamp', nullable: true })
+  validUntil!: Date | null;
+
+  @Column({ name: 'applicable_vendor_ids', type: 'json', nullable: true })
+  applicableVendorIds!: string[] | null;
+
+  @Column({ name: 'applicable_category_ids', type: 'json', nullable: true })
+  applicableCategoryIds!: string[] | null;
 
   @Column({ type: 'varchar', length: 32, default: 'active' })
   @Index()
   status!: string;
 
-  @Column({ name: 'discount_json', type: 'json', nullable: true })
-  discountJson!: Record<string, unknown> | null;
-
-  @Column({ name: 'valid_from', type: 'timestamp', nullable: true })
-  validFrom!: Date | null;
-
-  @Column({ name: 'valid_to', type: 'timestamp', nullable: true })
-  validTo!: Date | null;
+  @Column({ type: 'json', nullable: true })
+  metadata!: Record<string, unknown> | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
