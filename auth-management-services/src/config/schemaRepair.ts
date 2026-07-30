@@ -14,7 +14,7 @@ import { AppDataSource } from './database';
  *     vendor OTP login SELECT/UPDATE)
  */
 
-const VENDOR_SIGNUP_REQUESTS_DDL = `
+const VENDOR_SIGNUP_REQUESTS_MYSQL_DDL = `
 CREATE TABLE IF NOT EXISTS vendor_signup_requests (
   \`id\` varchar(36) NOT NULL,
   \`request_type\` varchar(64) NOT NULL DEFAULT 'signup',
@@ -27,27 +27,85 @@ CREATE TABLE IF NOT EXISTS vendor_signup_requests (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;
 
+const VENDOR_SIGNUP_REQUESTS_PG_DDL = `
+CREATE TABLE IF NOT EXISTS vendor_signup_requests (
+  id varchar(36) NOT NULL,
+  request_type varchar(64) NOT NULL DEFAULT 'signup',
+  payload json NOT NULL,
+  status varchar(32) NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS idx_vendor_signup_requests_status ON vendor_signup_requests (status);
+`;
+
 interface ColumnSpec {
   name: string;
-  ddl: string;
+  mysqlDdl: string;
+  pgDdl: string;
 }
 
 const CUSTOMER_PROFILE_COLUMNS: ColumnSpec[] = [
-  { name: 'state', ddl: '`state` VARCHAR(128) NULL' },
-  { name: 'district', ddl: '`district` VARCHAR(128) NULL' },
-  { name: 'area_locality', ddl: '`area_locality` VARCHAR(255) NULL' },
-  { name: 'pincode', ddl: '`pincode` VARCHAR(16) NULL' },
-  { name: 'latitude', ddl: '`latitude` DECIMAL(10,7) NULL' },
-  { name: 'longitude', ddl: '`longitude` DECIMAL(10,7) NULL' },
-  { name: 'referral_code', ddl: '`referral_code` VARCHAR(64) NULL' },
+  {
+    name: 'state',
+    mysqlDdl: '`state` VARCHAR(128) NULL',
+    pgDdl: 'state VARCHAR(128) NULL',
+  },
+  {
+    name: 'district',
+    mysqlDdl: '`district` VARCHAR(128) NULL',
+    pgDdl: 'district VARCHAR(128) NULL',
+  },
+  {
+    name: 'area_locality',
+    mysqlDdl: '`area_locality` VARCHAR(255) NULL',
+    pgDdl: 'area_locality VARCHAR(255) NULL',
+  },
+  {
+    name: 'pincode',
+    mysqlDdl: '`pincode` VARCHAR(16) NULL',
+    pgDdl: 'pincode VARCHAR(16) NULL',
+  },
+  {
+    name: 'latitude',
+    mysqlDdl: '`latitude` DECIMAL(10,7) NULL',
+    pgDdl: 'latitude DECIMAL(10,7) NULL',
+  },
+  {
+    name: 'longitude',
+    mysqlDdl: '`longitude` DECIMAL(10,7) NULL',
+    pgDdl: 'longitude DECIMAL(10,7) NULL',
+  },
+  {
+    name: 'referral_code',
+    mysqlDdl: '`referral_code` VARCHAR(64) NULL',
+    pgDdl: 'referral_code VARCHAR(64) NULL',
+  },
 ];
 
 /** Columns auth's CatalogVendor entity reads/writes on shared catalog_vendors. */
 const CATALOG_VENDOR_COLUMNS: ColumnSpec[] = [
-  { name: 'business_type', ddl: '`business_type` VARCHAR(64) NULL' },
-  { name: 'vendor_kind', ddl: "`vendor_kind` VARCHAR(16) NOT NULL DEFAULT 'product'" },
-  { name: 'vendor_type', ddl: "`vendor_type` VARCHAR(16) NOT NULL DEFAULT 'PRODUCT'" },
+  {
+    name: 'business_type',
+    mysqlDdl: '`business_type` VARCHAR(64) NULL',
+    pgDdl: 'business_type VARCHAR(64) NULL',
+  },
+  {
+    name: 'vendor_kind',
+    mysqlDdl: "`vendor_kind` VARCHAR(16) NOT NULL DEFAULT 'product'",
+    pgDdl: "vendor_kind VARCHAR(16) NOT NULL DEFAULT 'product'",
+  },
+  {
+    name: 'vendor_type',
+    mysqlDdl: "`vendor_type` VARCHAR(16) NOT NULL DEFAULT 'PRODUCT'",
+    pgDdl: "vendor_type VARCHAR(16) NOT NULL DEFAULT 'PRODUCT'",
+  },
 ];
+
+function isPostgres(): boolean {
+  return (process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres';
+}
 
 async function ensureTableColumns(
   queryRunner: ReturnType<typeof AppDataSource.createQueryRunner>,
@@ -55,7 +113,38 @@ async function ensureTableColumns(
   table: string,
   columns: ColumnSpec[],
   logPrefix: string,
+  postgres: boolean,
 ): Promise<void> {
+  if (postgres) {
+    const tableExists = await queryRunner.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = $1`,
+      [table],
+    );
+    if (!Array.isArray(tableExists) || tableExists.length === 0) return;
+
+    for (const col of columns) {
+      const present = await queryRunner.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+        [table, col.name],
+      );
+      if (Array.isArray(present) && present.length > 0) continue;
+      try {
+        await queryRunner.query(
+          `ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS ${col.pgDdl}`,
+        );
+        console.log(`[auth-service] Added ${logPrefix}.${col.name}`);
+      } catch (alterErr: any) {
+        console.warn(
+          `[auth-service] Could not add ${logPrefix}.${col.name}:`,
+          alterErr?.message ?? alterErr,
+        );
+      }
+    }
+    return;
+  }
+
   const tableExists = await queryRunner.query(
     `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
     [dbName, table],
@@ -69,7 +158,7 @@ async function ensureTableColumns(
     );
     if (Array.isArray(present) && present.length > 0) continue;
     try {
-      await queryRunner.query(`ALTER TABLE \`${table}\` ADD COLUMN ${col.ddl}`);
+      await queryRunner.query(`ALTER TABLE \`${table}\` ADD COLUMN ${col.mysqlDdl}`);
       console.log(`[auth-service] Added ${logPrefix}.${col.name}`);
     } catch (alterErr: any) {
       console.warn(
@@ -82,16 +171,17 @@ async function ensureTableColumns(
 
 export async function repairAuthSchema(): Promise<void> {
   if (!AppDataSource.isInitialized) return;
-  if ((process.env.DB_TYPE || 'mysql').toLowerCase() === 'postgres') {
-    console.log('[auth-service] schema repair skipped on postgres');
-    return;
-  }
+  const postgres = isPostgres();
   const queryRunner = AppDataSource.createQueryRunner();
   try {
     await queryRunner.connect();
 
     try {
-      await queryRunner.query(VENDOR_SIGNUP_REQUESTS_DDL);
+      if (postgres) {
+        await queryRunner.query(VENDOR_SIGNUP_REQUESTS_PG_DDL);
+      } else {
+        await queryRunner.query(VENDOR_SIGNUP_REQUESTS_MYSQL_DDL);
+      }
       console.log('[auth-service] Ensured vendor_signup_requests table exists');
     } catch (e: any) {
       console.warn(
@@ -109,6 +199,7 @@ export async function repairAuthSchema(): Promise<void> {
         'customer_profiles',
         CUSTOMER_PROFILE_COLUMNS,
         'customer_profiles',
+        postgres,
       );
     } catch (e: any) {
       console.warn(
@@ -124,6 +215,7 @@ export async function repairAuthSchema(): Promise<void> {
         'catalog_vendors',
         CATALOG_VENDOR_COLUMNS,
         'catalog_vendors',
+        postgres,
       );
     } catch (e: any) {
       console.warn(
