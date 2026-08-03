@@ -86,6 +86,46 @@ export class VendorBookingsService {
     return enrichBookingForVendorPortal(saved);
   }
 
+  async submitAdditionalBill(vendorId: string, bookingId: string, input: Record<string, any>) {
+    await this.assertServiceVendor(vendorId);
+    return AppDataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({
+        where: { id: bookingId, vendorId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row);
+      const existing = meta.additionalBill as Record<string, any> | undefined;
+      if (row.status === 'bill_pending_acceptance' && existing?.status === 'pending_acceptance') {
+        return { ...row, duplicate: true };
+      }
+      if (row.status !== 'in_progress') {
+        throw new Error('Additional bills can only be submitted for in-progress bookings');
+      }
+      const amount = Number(input.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error('Additional bill amount must be greater than zero');
+      }
+      const photoUrls = Array.isArray(input.photoUrls)
+        ? input.photoUrls.map(String).filter(Boolean).slice(0, 5)
+        : [];
+      const baseAmount = Number(row.totalAmount || 0);
+      meta.additionalBill = {
+        status: 'pending_acceptance',
+        amount: Math.round(amount * 100) / 100,
+        note: String(input.note || '').trim() || undefined,
+        photoUrls,
+        submittedAt: new Date().toISOString(),
+        submittedBy: 'vendor',
+        baseAmountAtSubmit: Number.isFinite(baseAmount) ? baseAmount : 0,
+      };
+      row.status = 'bill_pending_acceptance';
+      row.metadata = meta;
+      return enrichBookingForVendorPortal(await repo.save(row));
+    });
+  }
+
   async submitCompletionProof(vendorId: string, bookingId: string, input: Record<string, any>) {
     await this.assertServiceVendor(vendorId);
     return AppDataSource.transaction(async manager => {
@@ -95,6 +135,10 @@ export class VendorBookingsService {
       const meta = bookingMeta(row); const existing = meta.completionProof as Record<string, any> | undefined;
       if (row.status === 'completion_pending' && existing?.otpNonce) return { ...row, duplicate: true };
       if (row.status !== 'in_progress') throw new Error('Only in-progress bookings can submit completion proof');
+      const pendingBill = meta.additionalBill as Record<string, any> | undefined;
+      if (pendingBill?.status === 'pending_acceptance') {
+        throw new Error('Customer must accept the additional bill before completion');
+      }
       const photoUrls = Array.isArray(input.photoUrls) ? input.photoUrls.map(String).filter(Boolean).slice(0, 5) : [];
       if (!photoUrls.length) throw new Error('At least one completion photo is required');
       const nonce = randomUUID(); const now = new Date();

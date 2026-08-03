@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
-import { In } from 'typeorm';
+import { In, IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Booking } from '../entities/Booking';
 import { Vendor } from '../entities/Vendor';
@@ -7,7 +7,11 @@ import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { CustomerProfile } from '../entities/CustomerProfile';
 import {
   buildSlotsForDate,
+  businessNowMinutes,
+  businessTodayYmd,
   mergeWithDefaults,
+  slotFreeOfBookings,
+  type BuiltSlot,
 } from './bookingAvailabilitySlots';
 import { enrichBookingForVendorPortal, enrichBookingsForVendorPortal } from './bookingEnrichment';
 
@@ -16,6 +20,59 @@ const LEGACY_TIME_SLOTS = [
   { label: 'Afternoon 12-3 PM', value: '12:00-15:00' },
   { label: 'Evening 4-6 PM', value: '16:00-18:00' },
 ];
+
+function legacySlotsForDate(
+  dateYmd: string,
+  booked: string[],
+  includeUnavailable: boolean,
+): BuiltSlot[] {
+  const today = businessTodayYmd();
+  const nowMin = dateYmd === today ? businessNowMinutes() : null;
+  const out: BuiltSlot[] = [];
+  for (const s of LEGACY_TIME_SLOTS) {
+    const range = parseSlotRange(s.value);
+    if (range && nowMin != null && range.a < nowMin) continue;
+    const free = slotStillFree(s.value, booked);
+    if (!free && !includeUnavailable) continue;
+    out.push({ label: s.label, value: s.value, available: free });
+  }
+  return out;
+}
+
+/** Statuses that keep a calendar slot reserved for the customer. */
+const SLOT_HOLDING_STATUSES = [
+  'pending',
+  'approved',
+  'confirmed',
+  'in_progress',
+  'bill_pending_acceptance',
+  'completion_pending',
+  'completion_pending_confirmation',
+  'disputed',
+] as const;
+
+function parseHmMinutes(hm: string): number {
+  const [h, m] = String(hm || '').split(':').map((x) => parseInt(x, 10));
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return NaN;
+  return h * 60 + m;
+}
+
+function parseSlotRange(value: string): { a: number; b: number } | null {
+  const m = String(value || '')
+    .trim()
+    .match(/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/);
+  if (!m) return null;
+  const a = parseHmMinutes(m[1]);
+  const b = parseHmMinutes(m[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
+  return { a, b };
+}
+
+function slotStillFree(timeSlot: string, bookedValues: string[]): boolean {
+  const range = parseSlotRange(timeSlot);
+  if (!range) return !bookedValues.includes(timeSlot);
+  return slotFreeOfBookings(range.a, range.b, bookedValues);
+}
 
 function extractDurationMinutesFromServiceMeta(meta: Record<string, unknown> | null | undefined): number | null {
   if (!meta || typeof meta !== 'object') return null;
@@ -60,8 +117,18 @@ export class BookingService {
     });
   }
 
-  async buildCandidateSlots(vendorId: string, date: string, serviceId?: string | null) {
-    const v = await this.loadVendorAvailabilityRow(vendorId);
+  /**
+   * Full day windows with availability flags (taken slots included as available:false).
+   * Pass freeOnly=true for createBooking membership checks.
+   */
+  async buildCandidateSlots(
+    vendorId: string,
+    date: string,
+    serviceId?: string | null,
+    options: { freeOnly?: boolean; vendorRow?: Vendor | null } = {},
+  ): Promise<BuiltSlot[]> {
+    const freeOnly = Boolean(options.freeOnly);
+    const v = options.vendorRow ?? (await this.loadVendorAvailabilityRow(vendorId));
     const hasJson = v?.bookingAvailabilityJson != null && typeof v.bookingAvailabilityJson === 'object';
     const cfg = mergeWithDefaults(v?.bookingAvailabilityJson);
     const slotMin = await this.slotMinutesForService(serviceId, cfg.defaultSlotMinutes ?? 60);
@@ -69,15 +136,20 @@ export class BookingService {
       where: {
         vendorId,
         bookingDate: date,
-        status: In(['pending', 'approved']),
+        status: In([...SLOT_HOLDING_STATUSES]),
       },
       select: ['timeSlot'],
     });
     const booked = existing.map((b) => b.timeSlot);
-    const built = buildSlotsForDate(cfg, date, booked, slotMin);
-    if (built.length > 0) return built;
+    const built = buildSlotsForDate(cfg, date, booked, slotMin, {
+      includeUnavailable: !freeOnly,
+    });
+    if (built.length > 0) {
+      return freeOnly ? built.filter((s) => s.available) : built;
+    }
     if (hasJson) return [];
-    return LEGACY_TIME_SLOTS.map((s) => ({ label: s.label, value: s.value }));
+    const legacy = legacySlotsForDate(date, booked, !freeOnly);
+    return freeOnly ? legacy.filter((s) => s.available) : legacy;
   }
 
   async createBooking(customerId: string, data: Partial<Booking>): Promise<Booking> {
@@ -86,14 +158,26 @@ export class BookingService {
     const timeSlot = String(data.timeSlot || '');
     if (!vendorId || !bookingDate || !timeSlot) throw new Error('vendorId, bookingDate, timeSlot are required');
 
-    const candidates = await this.buildCandidateSlots(vendorId, bookingDate, data.serviceId ?? null);
+    const serviceId = data.serviceId ? String(data.serviceId) : null;
+    const existing = await this.repo.findOne({
+      where: {
+        customerId,
+        vendorId,
+        serviceId: serviceId || IsNull(),
+        bookingDate,
+        timeSlot,
+        status: In([...SLOT_HOLDING_STATUSES]),
+      },
+    });
+    // A repeated confirmation/page retry returns the original booking instead
+    // of creating a duplicate or reporting its own slot as unavailable.
+    if (existing) return existing;
+
+    const candidates = await this.buildCandidateSlots(vendorId, bookingDate, data.serviceId ?? null, {
+      freeOnly: true,
+    });
     const allowedValues = new Set(candidates.map((c) => c.value));
     if (!allowedValues.has(timeSlot)) throw new Error('Selected time slot is not available');
-
-    const dup = await this.repo.count({
-      where: { vendorId, bookingDate, timeSlot, status: In(['pending', 'approved']) },
-    });
-    if (dup > 0) throw new Error('That time slot is no longer available');
 
     const meta: Record<string, unknown> =
       data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)
@@ -103,12 +187,13 @@ export class BookingService {
     if (sid) {
       const item = await AppDataSource.getRepository(CatalogServiceItem).findOne({
         where: { id: sid },
-        select: ['id', 'name', 'metadata'],
+        select: ['id', 'name', 'iconUrl', 'metadata'],
       });
       if (item?.name && !meta.serviceName) meta.serviceName = item.name;
       if (!meta.serviceImage) {
         const m = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {};
         const img =
+          item?.iconUrl ||
           (typeof (m as Record<string, unknown>).imageUrl === 'string'
             ? String((m as Record<string, unknown>).imageUrl)
             : null) ||
@@ -119,14 +204,82 @@ export class BookingService {
       }
     }
 
-    const row = this.repo.create({
-      id: randomUUID(),
-      ...data,
-      customerId,
-      status: 'pending',
-      metadata: Object.keys(meta).length ? meta : null,
+    if (!meta.customer) {
+      const aliases = await this.customerIdAliases(customerId);
+      const customer = await AppDataSource.getRepository(CustomerProfile).findOne({
+        where: [
+          { id: In(aliases.length ? aliases : [customerId]) },
+          { keycloakUserId: customerId },
+        ],
+      });
+      if (customer) {
+        meta.customer = {
+          id: customer.id,
+          name: customer.fullName,
+          email: customer.email,
+          phone: customer.phone,
+        };
+      }
+    }
+
+    const saved = await AppDataSource.transaction(async (manager) => {
+      // Lock the vendor while reserving a slot so concurrent requests cannot
+      // both pass availability checks and persist the same appointment.
+      const lockedVendor = await manager.getRepository(Vendor).findOne({
+        where: { id: vendorId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedVendor) throw new Error('Vendor not found');
+      const repo = manager.getRepository(Booking);
+      const retry = await repo.findOne({
+        where: {
+          customerId,
+          vendorId,
+          serviceId: serviceId || IsNull(),
+          bookingDate,
+          timeSlot,
+          status: In([...SLOT_HOLDING_STATUSES]),
+        },
+      });
+      if (retry) return retry;
+      const dayBookings = await repo.find({
+        where: {
+          vendorId,
+          bookingDate,
+          status: In([...SLOT_HOLDING_STATUSES]),
+        },
+        select: ['timeSlot'],
+      });
+      const booked = dayBookings.map((b) => b.timeSlot);
+      if (!slotStillFree(timeSlot, booked)) {
+        throw new Error('That time slot is no longer available');
+      }
+      // Re-validate against locked vendor schedule (offs / todayClosed / past).
+      const cfg = mergeWithDefaults(lockedVendor.bookingAvailabilityJson);
+      const slotMin = await this.slotMinutesForService(serviceId, cfg.defaultSlotMinutes ?? 60);
+      const hasJson =
+        lockedVendor.bookingAvailabilityJson != null &&
+        typeof lockedVendor.bookingAvailabilityJson === 'object';
+      let schedule = buildSlotsForDate(cfg, bookingDate, booked, slotMin, {
+        includeUnavailable: true,
+      });
+      if (schedule.length === 0 && !hasJson) {
+        schedule = legacySlotsForDate(bookingDate, booked, true);
+      }
+      const match = schedule.find((s) => s.value === timeSlot);
+      if (!match || !match.available) {
+        throw new Error('That time slot is no longer available');
+      }
+      const row = repo.create({
+        id: randomUUID(),
+        ...data,
+        serviceId,
+        customerId,
+        status: 'pending',
+        metadata: Object.keys(meta).length ? meta : null,
+      });
+      return repo.save(row);
     });
-    const saved = await this.repo.save(row);
     void BookingService.notifyVendorOfNewBooking(saved).catch(() => undefined);
     return saved;
   }
@@ -224,6 +377,44 @@ export class BookingService {
       skip: offset,
     });
     return { items, total, limit, offset };
+  }
+
+  async decideAdditionalBill(customerId: string, bookingId: string, accept: boolean, reason?: string) {
+    return AppDataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Booking);
+      const row = await repo.findOne({
+        where: { id: bookingId, customerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row) throw new Error('Booking not found');
+      const meta = bookingMeta(row);
+      const bill = { ...(meta.additionalBill || {}) } as Record<string, any>;
+      if (!bill.status) throw new Error('No additional bill is pending');
+      if (bill.status === 'accepted' && accept) return { ...row, duplicate: true };
+      if (row.status !== 'bill_pending_acceptance' || bill.status !== 'pending_acceptance') {
+        throw new Error('Additional bill is not awaiting acceptance');
+      }
+      const now = new Date().toISOString();
+      if (accept) {
+        const base = Number(bill.baseAmountAtSubmit ?? row.totalAmount ?? 0);
+        const extra = Number(bill.amount || 0);
+        const nextTotal = Math.round((base + extra) * 100) / 100;
+        bill.status = 'accepted';
+        bill.acceptedAt = now;
+        bill.acceptedTotal = nextTotal;
+        row.totalAmount = String(nextTotal);
+        row.status = 'in_progress';
+      } else {
+        const detail = String(reason || '').trim();
+        if (detail.length < 5) throw new Error('Rejection reason must contain at least 5 characters');
+        bill.status = 'rejected';
+        bill.rejectedAt = now;
+        bill.rejectionReason = detail;
+        row.status = 'in_progress';
+      }
+      row.metadata = { ...meta, additionalBill: bill };
+      return repo.save(row);
+    });
   }
 
   async getCompletionOtp(customerId: string, bookingId: string) {
@@ -370,20 +561,13 @@ export class BookingService {
   }
 
   async getAvailableSlots(vendorId: string, date: string, serviceId?: string | null) {
-    const candidates = await this.buildCandidateSlots(vendorId, date, serviceId);
-    const existing = await this.repo.find({
-      where: {
-        vendorId,
-        bookingDate: date,
-        status: In(['pending', 'approved']),
-      },
-      select: ['timeSlot'],
+    const candidates = await this.buildCandidateSlots(vendorId, date, serviceId, {
+      freeOnly: false,
     });
-    const booked = new Set(existing.map((b) => b.timeSlot));
     return candidates.map((slot) => ({
       label: slot.label,
       value: slot.value,
-      available: !booked.has(slot.value),
+      available: slot.available !== false,
     }));
   }
 }

@@ -335,6 +335,12 @@ export function createVendorRoutes(): Router {
 
   router.get('/bookings/:bookingId', ...bookingRead, getBooking);
 
+  router.post('/bookings/:bookingId/additional-bill', ...bookingWrite, async (req: Request, res: Response) => {
+    const vendorId = await requireVendorId(req, res, svc); if (!vendorId) return;
+    try { sendSuccess(res, await bookingSvc.submitAdditionalBill(vendorId, req.params.bookingId, req.body || {})); }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
+
   router.post('/bookings/:bookingId/completion-proof', ...bookingWrite, async (req: Request, res: Response) => {
     const vendorId = await requireVendorId(req, res, svc); if (!vendorId) return;
     try { sendSuccess(res, await bookingSvc.submitCompletionProof(vendorId, req.params.bookingId, req.body || {})); }

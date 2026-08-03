@@ -610,7 +610,7 @@ export class CatalogAdminService {
     if (params.serviceId) {
       return repo.find({ where: { serviceId: params.serviceId }, order: { price: 'ASC' } });
     }
-    throw new Error('vendorId, serviceId, or moderationStatus query parameter is required');
+    return repo.find({ order: { updatedAt: 'DESC' }, take: 500 });
   }
 
   async upsertVendorServiceLink(

@@ -13,14 +13,24 @@ export type DayScheduleV1 = {
 
 export type BookingAvailabilityV1 = {
   version: 1;
-  /** When true, no slots are offered for “today” (server calendar date). */
+  /** When true, no slots are offered for “today” (business calendar date). */
   todayClosed?: boolean;
   defaultSlotMinutes?: number;
   weekly: Record<string, DayScheduleV1>;
   dateOffs: { date: string; reason?: string | null }[];
 };
 
+export type BuiltSlot = {
+  label: string;
+  value: string;
+  available: boolean;
+};
+
 const DAY_KEYS = ['0', '1', '2', '3', '4', '5', '6'] as const;
+
+/** India ops timezone — availability “today” / past-slot filtering. */
+export const BOOKING_BUSINESS_TZ =
+  String(process.env.BOOKING_BUSINESS_TZ || 'Asia/Kolkata').trim() || 'Asia/Kolkata';
 
 export function defaultBookingAvailabilityV1(): BookingAvailabilityV1 {
   const weekly: Record<string, DayScheduleV1> = {};
@@ -106,19 +116,42 @@ function slotLabel(start: string, end: string): string {
   return `${start} – ${end}`;
 }
 
-/** Parse YYYY-MM-DD in the server local calendar (aligned with typical date-picker values). */
+/** Weekday for a civil YYYY-MM-DD (UTC calendar math — independent of host TZ). */
 export function ymdDow(ymd: string): { ymd: string; dow: number } {
-  const [y, mo, d] = ymd.split("-").map((x) => parseInt(x, 10));
-  const dt = new Date(y, mo - 1, d);
-  return { ymd, dow: dt.getDay() };
+  const [y, mo, d] = ymd.split('-').map((x) => parseInt(x, 10));
+  const dt = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
+  return { ymd, dow: dt.getUTCDay() };
 }
 
+/** Today’s YYYY-MM-DD in the booking business timezone (default Asia/Kolkata). */
+export function businessTodayYmd(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BOOKING_BUSINESS_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+/** @deprecated Prefer businessTodayYmd — kept for existing imports. */
 export function serverTodayYmdLocal(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return businessTodayYmd();
+}
+
+/** Minutes since midnight in the booking business timezone. */
+export function businessNowMinutes(now: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: BOOKING_BUSINESS_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? NaN);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? NaN);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return 0;
+  // en-GB can emit "24" for midnight in some runtimes
+  const h = hour === 24 ? 0 : hour;
+  return h * 60 + minute;
 }
 
 function rangesOverlap(a0: number, a1: number, b0: number, b1: number): boolean {
@@ -145,13 +178,30 @@ export function slotFreeOfBookings(slotStart: number, slotEnd: number, bookedVal
   return true;
 }
 
+export type BuildSlotsOptions = {
+  /** When true, include taken slots with available:false. Default true for pickers. */
+  includeUnavailable?: boolean;
+  /** Override “now” for tests. */
+  now?: Date;
+};
+
+/**
+ * Build schedule windows for a date.
+ * - Past slots for “today” (business TZ) are omitted.
+ * - Taken slots are included with available:false when includeUnavailable is true.
+ */
 export function buildSlotsForDate(
   cfg: BookingAvailabilityV1,
   dateYmd: string,
   bookedTimeSlots: string[],
   slotMinutes: number,
-): { label: string; value: string }[] {
-  if (cfg.todayClosed && dateYmd === serverTodayYmdLocal()) return [];
+  options: BuildSlotsOptions = {},
+): BuiltSlot[] {
+  const includeUnavailable = options.includeUnavailable !== false;
+  const now = options.now ?? new Date();
+  const todayYmd = businessTodayYmd(now);
+
+  if (cfg.todayClosed && dateYmd === todayYmd) return [];
   if ((cfg.dateOffs || []).some((o) => o.date === dateYmd)) return [];
 
   const { dow } = ymdDow(dateYmd);
@@ -160,15 +210,19 @@ export function buildSlotsForDate(
 
   const buf = Math.max(0, Math.min(240, Number(day.bufferMinutes) || 0));
   const slotLen = Math.max(15, Math.min(480, slotMinutes || 60));
+  const nowMin = dateYmd === todayYmd ? businessNowMinutes(now) : null;
 
-  const out: { label: string; value: string }[] = [];
+  const out: BuiltSlot[] = [];
   const pushSlot = (start: string, end: string) => {
     const a = parseHm(start);
     const b = parseHm(end);
     if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return;
+    // Drop windows that have already started (or finished) on today.
+    if (nowMin != null && a < nowMin) return;
     const value = `${start}-${end}`;
-    if (!slotFreeOfBookings(a, b, bookedTimeSlots)) return;
-    out.push({ label: slotLabel(start, end), value });
+    const free = slotFreeOfBookings(a, b, bookedTimeSlots);
+    if (!free && !includeUnavailable) return;
+    out.push({ label: slotLabel(start, end), value, available: free });
   };
 
   const customs = Array.isArray(day.customSlots) ? day.customSlots : [];

@@ -238,6 +238,9 @@ export function createCommerceRoutes(): Router {
           req.body?.deliverySchedule && typeof req.body.deliverySchedule === 'object'
             ? req.body.deliverySchedule
             : null;
+        const idempotencyKey = String(
+          req.header('idempotency-key') || req.body?.idempotencyKey || '',
+        ).trim();
         const order = await cartSvc.createOrderFromCart(customerId, req.body?.vendorId ?? undefined, {
           redeemPoints: Number.isFinite(redeemPoints) && redeemPoints > 0 ? redeemPoints : 0,
           couponCode,
@@ -245,6 +248,7 @@ export function createCommerceRoutes(): Router {
           shippingAddress,
           paymentMode,
           deliverySchedule,
+          idempotencyKey,
         });
         sendCreated(res, order);
       } catch (e: any) {
@@ -540,6 +544,22 @@ export function createCommerceRoutes(): Router {
       sendSuccess(res, row);
     }
   );
+
+  router.post('/bookings/:bookingId/additional-bill/decision', requireShopperRole, requirePermission('booking.write.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
+    try {
+      sendSuccess(
+        res,
+        await bookingSvc.decideAdditionalBill(
+          customerId,
+          req.params.bookingId,
+          req.body?.accept !== false,
+          req.body?.reason,
+        ),
+      );
+    }
+    catch (e: any) { if (e.message === 'Booking not found') return sendNotFound(res, e.message); sendBadRequest(res, e.message); }
+  });
 
   router.get('/bookings/:bookingId/completion-otp', requireShopperRole, requirePermission('booking.read.self'), async (req: Request, res: Response) => {
     const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');

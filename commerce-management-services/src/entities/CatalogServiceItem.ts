@@ -16,6 +16,9 @@ export class CatalogServiceItem {
   @Column({ type: 'varchar', length: 255, nullable: true })
   name!: string | null;
 
+  @Column({ name: 'icon_url', type: 'varchar', length: 512, nullable: true })
+  iconUrl!: string | null;
+
   @Column({ type: 'json', nullable: true })
   metadata!: Record<string, unknown> | null;
 }

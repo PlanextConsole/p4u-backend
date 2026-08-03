@@ -44,6 +44,21 @@ export class PaymentService {
   }) {
     const repo = AppDataSource.getRepository(PaymentIntent);
     const currency = input.currency || 'INR';
+    const reusable = await repo.findOne({
+      where: input.customerId
+        ? { orderId: input.orderId, customerId: input.customerId }
+        : { orderId: input.orderId },
+      order: { createdAt: 'DESC' },
+    });
+    if (
+      reusable &&
+      ['created', 'captured'].includes(String(reusable.status || '').toLowerCase()) &&
+      Number(reusable.amount) === Number(input.amount) &&
+      reusable.currency === currency &&
+      reusable.providerRef
+    ) {
+      return reusable;
+    }
     const razorpayOrder: any = process.env.PAYMENT_PROVIDER_MODE === 'test'
       ? { id: `order_test_${crypto.randomBytes(10).toString('hex')}` }
       : await this.getRazorpay().orders.create({ amount: this.toSubunits(input.amount), currency, receipt: input.orderId,
@@ -90,7 +105,10 @@ export class PaymentService {
       if (productOrderId) {
         const secret =
           process.env.PRODUCT_PAYMENT_WEBHOOK_SECRET || process.env.FOOD_PAYMENT_WEBHOOK_SECRET || '';
-        if (secret) {
+        if (!secret) {
+          throw new Error('Product payment callback secret is not configured');
+        }
+        {
           const callback = JSON.stringify({
             eventId: `verify_${row.id}`,
             productOrderId,
@@ -98,8 +116,7 @@ export class PaymentService {
             providerPaymentId: input.paymentId,
             status: 'success',
           });
-          try {
-            await axios.post(
+          await axios.post(
               `${process.env.COMMERCE_SERVICE_URL || 'http://localhost:8086'}/api/v1/commerce/product-payments/webhook`,
               callback,
               {
@@ -110,13 +127,10 @@ export class PaymentService {
                 timeout: 15000,
               },
             );
-          } catch (error) {
-            console.error('[payment] product paid callback after verify failed:', error);
-          }
         }
       }
     }
-    return { verified: true, intentId: row?.id ?? null };
+    return { verified: true, intentId: row?.id ?? null, commerceConfirmed: true };
   }
 
   async refundPayment(input: { orderId: string; amount: string; reason?: string }) {

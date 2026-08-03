@@ -374,9 +374,6 @@ export function createCatalogAdminRoutes(): Router {
       const vendorId = String(req.query.vendorId ?? '').trim() || undefined;
       const serviceId = String(req.query.serviceId ?? '').trim() || undefined;
       const moderationStatus = String(req.query.moderationStatus ?? '').trim() || undefined;
-      if (!vendorId && !serviceId && !moderationStatus) {
-        return res.status(400).json({ message: 'vendorId, serviceId, or moderationStatus is required' });
-      }
       const items = await svc.listVendorServiceLinks({ vendorId, serviceId, moderationStatus });
       res.json({ items });
     } catch (e: any) {

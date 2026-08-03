@@ -53,6 +53,25 @@ export class CartService {
   private commerce = new CommerceQueryService();
   private pricing = new PricingService();
 
+  private async existingCheckout(
+    customerId: string,
+    idempotencyKey: string,
+    manager = AppDataSource.manager,
+  ): Promise<(Order & { orders?: Order[] }) | null> {
+    if (!idempotencyKey) return null;
+    const rows = await manager.getRepository(Order).find({
+      where: { customerId },
+      order: { createdAt: 'ASC' },
+    });
+    const matches = rows.filter((row) => {
+      const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      return String((meta as Record<string, unknown>).checkoutKey || '') === idempotencyKey;
+    });
+    if (!matches.length) return null;
+    const primary = matches.find((row) => Boolean((row.metadata as any)?.checkoutPrimary)) || matches[0];
+    return matches.length === 1 ? primary : Object.assign(primary, { orders: matches });
+  }
+
   /** Returns a full pre-checkout breakdown without persisting anything. */
   async quoteCart(
     customerId: string,
@@ -395,8 +414,14 @@ export class CartService {
       shippingAddress?: Record<string, unknown> | null;
       paymentMode?: string;
       deliverySchedule?: Record<string, unknown> | null;
+      idempotencyKey?: string;
     } = {},
   ): Promise<Order & { orders?: Order[] }> {
+    const idempotencyKey = String(opts.idempotencyKey || '').trim().slice(0, 128);
+    if (idempotencyKey) {
+      const existing = await this.existingCheckout(customerId, idempotencyKey);
+      if (existing) return existing;
+    }
     const data = await this.getCartResponse(customerId);
     if (!data.items.length) {
       throw new Error('Cart is empty');
@@ -500,6 +525,20 @@ export class CartService {
       const orderRepo = queryRunner.manager.getRepository(Order);
       const settlementRepo = queryRunner.manager.getRepository(Settlement);
       const created: Order[] = [];
+
+      // Serialize checkout per cart, then re-check the request key. This closes
+      // the double-click/retry race without changing the public order schema.
+      await queryRunner.manager.getRepository(Cart).findOne({
+        where: { id: data.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (idempotencyKey) {
+        const duplicate = await this.existingCheckout(customerId, idempotencyKey, queryRunner.manager);
+        if (duplicate) {
+          await queryRunner.commitTransaction();
+          return duplicate;
+        }
+      }
       const stamp = Date.now();
       let vendorIndex = 0;
 
@@ -530,6 +569,8 @@ export class CartService {
           totalAmount: Number(amount.toFixed(2)).toFixed(2),
           metadata: {
             source: 'cart',
+            checkoutKey: idempotencyKey || undefined,
+            checkoutPrimary: isPrimary,
             cartId: data.id,
             lines: vendorLines,
             multiVendor: linesByVendor.size > 1,

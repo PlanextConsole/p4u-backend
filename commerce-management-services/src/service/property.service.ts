@@ -79,11 +79,128 @@ function view(row: PropertyListing) {
     image_url: cover,
     cover_image: cover,
     images,
+    image_urls: images,
     description: details.description || '',
     bhk: details.bhk ?? null,
     area_sqft: details.areaSqft ?? details.area_sqft ?? null,
+    area_unit: details.areaUnit || details.area_unit || 'sqft',
+    carpet_area: details.carpetArea ?? details.carpet_area ?? null,
+    bathrooms: details.bathrooms ?? null,
+    balconies: details.balconies ?? null,
+    floor: details.floor ?? null,
+    total_floors: details.totalFloors ?? details.total_floors ?? null,
+    property_age_years: details.propertyAgeYears ?? details.property_age_years ?? null,
+    furnishing: details.furnishing || '',
+    facing: details.facing || '',
+    parking: details.parking || '',
+    ownership: details.ownership || '',
+    availability: details.availability || '',
+    available_from: details.availableFrom || details.available_from || '',
+    plot_length: details.plotLength ?? details.plot_length ?? null,
+    plot_width: details.plotWidth ?? details.plot_width ?? null,
+    road_width: details.roadWidth ?? details.road_width ?? null,
+    boundary_wall: Boolean(details.boundaryWall ?? details.boundary_wall),
+    gated_community: Boolean(details.gatedCommunity ?? details.gated_community),
     amenities: details.amenities || [],
+    price_negotiable: Boolean(details.priceNegotiable ?? details.price_negotiable ?? true),
+    maintenance: details.maintenance ?? null,
+    security_deposit: details.securityDeposit ?? details.security_deposit ?? null,
+    brokerage: details.brokerage ?? null,
+    state: details.state || '',
+    address: details.address || '',
+    landmark: details.landmark || '',
+    pincode: details.pincode || '',
+    posted_by: row.postedBy,
+    contact_name: details.contactName || details.contact_name || metadata.contactName || '',
+    contact_phone: details.contactPhone || details.contact_phone || metadata.contactPhone || '',
   };
+}
+
+function pickImages(input: any): string[] {
+  const pools = [input?.images, input?.image_urls, input?.imageUrls];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const pool of pools) {
+    if (!Array.isArray(pool)) continue;
+    for (const img of pool) {
+      const u =
+        typeof img === 'string'
+          ? img.trim()
+          : img && typeof img === 'object'
+            ? String((img as any).url || (img as any).src || (img as any).imageUrl || '').trim()
+            : '';
+      if (!u || seen.has(u)) continue;
+      seen.add(u);
+      out.push(u);
+    }
+  }
+  const cover = String(input?.cover_image || input?.image_url || input?.imageUrl || '').trim();
+  if (cover && !seen.has(cover)) out.unshift(cover);
+  return out.slice(0, 20);
+}
+
+function buildDetailsBlob(input: any, existing?: Record<string, unknown> | null) {
+  const prev = existing && typeof existing === 'object' ? { ...existing } : {};
+  const images = pickImages(input);
+  const numOrNull = (v: unknown) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const str = (v: unknown) => (v === undefined || v === null ? undefined : String(v).trim());
+  const next: Record<string, unknown> = { ...prev };
+  const set = (key: string, value: unknown) => {
+    if (value !== undefined) next[key] = value;
+  };
+  set('description', str(input.description));
+  set('areaSqft', numOrNull(input.area_sqft ?? input.areaSqft));
+  set('areaUnit', str(input.area_unit ?? input.areaUnit));
+  set('carpetArea', numOrNull(input.carpet_area ?? input.carpetArea));
+  set('bhk', numOrNull(input.bhk));
+  set('bathrooms', numOrNull(input.bathrooms));
+  set('balconies', numOrNull(input.balconies));
+  set('floor', numOrNull(input.floor) ?? str(input.floor));
+  set('totalFloors', numOrNull(input.total_floors ?? input.totalFloors) ?? str(input.total_floors ?? input.totalFloors));
+  set(
+    'propertyAgeYears',
+    numOrNull(input.property_age_years ?? input.propertyAgeYears) ??
+      str(input.property_age_years ?? input.propertyAgeYears),
+  );
+  set('furnishing', str(input.furnishing));
+  set('facing', str(input.facing));
+  set('parking', str(input.parking));
+  set('ownership', str(input.ownership));
+  set('availability', str(input.availability));
+  set('availableFrom', str(input.available_from ?? input.availableFrom));
+  set('plotLength', numOrNull(input.plot_length ?? input.plotLength) ?? str(input.plot_length ?? input.plotLength));
+  set('plotWidth', numOrNull(input.plot_width ?? input.plotWidth) ?? str(input.plot_width ?? input.plotWidth));
+  set('roadWidth', numOrNull(input.road_width ?? input.roadWidth) ?? str(input.road_width ?? input.roadWidth));
+  if (input.boundary_wall !== undefined || input.boundaryWall !== undefined) {
+    next.boundaryWall = Boolean(input.boundary_wall ?? input.boundaryWall);
+  }
+  if (input.gated_community !== undefined || input.gatedCommunity !== undefined) {
+    next.gatedCommunity = Boolean(input.gated_community ?? input.gatedCommunity);
+  }
+  if (input.price_negotiable !== undefined || input.priceNegotiable !== undefined) {
+    next.priceNegotiable = Boolean(input.price_negotiable ?? input.priceNegotiable);
+  }
+  set('maintenance', numOrNull(input.maintenance));
+  set('securityDeposit', numOrNull(input.security_deposit ?? input.securityDeposit));
+  set('brokerage', numOrNull(input.brokerage));
+  set('state', str(input.state));
+  set('address', str(input.address));
+  set('landmark', str(input.landmark));
+  set('pincode', str(input.pincode));
+  set('contactName', str(input.contact_name ?? input.contactName));
+  set('contactPhone', str(input.contact_phone ?? input.contactPhone));
+  if (Array.isArray(input.amenities)) next.amenities = input.amenities.map(String);
+  if (images.length) {
+    next.images = images;
+    next.coverImage = images[0];
+  } else if (str(input.cover_image ?? input.image_url)) {
+    next.coverImage = str(input.cover_image ?? input.image_url);
+  }
+  return next;
 }
 
 export class PropertyService {
@@ -147,9 +264,8 @@ export class PropertyService {
     if (title.length < 5) throw new Error('Property title must contain at least 5 characters');
     const price = Number(input.price || 0);
     if (!Number.isFinite(price) || price <= 0) throw new Error('Valid property price is required');
-    const images = Array.isArray(input.images)
-      ? input.images.map(String).filter(Boolean).slice(0, 20)
-      : [];
+    const details = buildDetailsBlob(input);
+    const images = Array.isArray(details.images) ? (details.images as string[]) : [];
     const row = this.repo.create({
       customerId,
       title,
@@ -158,21 +274,18 @@ export class PropertyService {
       listingType: String(input.transaction_type || input.listingType || 'rent').toLowerCase(),
       propertyType: String(input.property_type || input.propertyType || 'Apartment'),
       price: price.toFixed(2),
-      postedBy: String(input.posted_by || 'Owner'),
+      postedBy: String(input.posted_by || input.postedBy || 'Owner'),
       photoCount: images.length,
       moderationStatus: 'pending',
       isReported: false,
       isAutoFlagged: false,
       submittedAt: new Date(),
-      details: {
-        description: String(input.description || '').trim(),
-        areaSqft: Number(input.area_sqft || input.areaSqft || 0),
-        bhk: Number(input.bhk || 0) || null,
-        images,
-        coverImage: images[0] || input.cover_image || input.image_url || '',
-        amenities: Array.isArray(input.amenities) ? input.amenities.map(String) : [],
+      details,
+      metadata: {
+        contactPreference: input.contactPreference || 'chat',
+        contactName: details.contactName || null,
+        contactPhone: details.contactPhone || null,
       },
-      metadata: { contactPreference: input.contactPreference || 'chat' },
     });
     return view(await this.repo.save(row));
   }
@@ -201,19 +314,17 @@ export class PropertyService {
     if (input.property_type !== undefined || input.propertyType !== undefined) {
       row.propertyType = String(input.property_type || input.propertyType);
     }
-    const details: any = { ...(row.details || {}) };
-    if (input.description !== undefined) details.description = String(input.description).trim();
-    if (input.area_sqft !== undefined || input.areaSqft !== undefined) {
-      details.areaSqft = Number(input.area_sqft ?? input.areaSqft ?? 0);
+    if (input.posted_by !== undefined || input.postedBy !== undefined) {
+      row.postedBy = String(input.posted_by || input.postedBy);
     }
-    if (input.bhk !== undefined) details.bhk = Number(input.bhk) || null;
-    if (Array.isArray(input.amenities)) details.amenities = input.amenities.map(String);
-    if (Array.isArray(input.images)) {
-      details.images = input.images.map(String).filter(Boolean).slice(0, 20);
-      details.coverImage = details.images[0] || '';
-      row.photoCount = details.images.length;
-    }
+    const details = buildDetailsBlob(input, (row.details as Record<string, unknown>) || {});
     row.details = details;
+    if (Array.isArray(details.images)) row.photoCount = (details.images as string[]).length;
+    const meta: Record<string, unknown> =
+      row.metadata && typeof row.metadata === 'object' ? { ...(row.metadata as object) } : {};
+    if (details.contactName !== undefined) meta.contactName = details.contactName;
+    if (details.contactPhone !== undefined) meta.contactPhone = details.contactPhone;
+    row.metadata = meta;
     row.moderationStatus = 'pending';
     row.submittedAt = new Date();
     return view(await this.repo.save(row));
