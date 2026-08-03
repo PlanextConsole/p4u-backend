@@ -280,6 +280,19 @@ export function createCommerceRoutes(): Router {
   );
 
   router.get(
+    '/orders/mine',
+    requireShopperRole,
+    requirePermission('order.read.self'),
+    async (req: Request, res: Response) => {
+      const customerId = customerIdFromAuth(req);
+      if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
+      const { limit, offset } = parsePaging(req);
+      const [items, total] = await svc.listCustomerOrders(customerId, limit, offset);
+      sendSuccess(res, items, 200, { total, limit, offset });
+    }
+  );
+
+  router.get(
     '/customers/:customerId/orders',
     requireShopperRole,
     requirePermission('order.read.self'),

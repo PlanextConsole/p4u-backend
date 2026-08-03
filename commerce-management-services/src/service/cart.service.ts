@@ -60,8 +60,9 @@ export class CartService {
     manager = AppDataSource.manager,
   ): Promise<(Order & { orders?: Order[] }) | null> {
     if (!idempotencyKey) return null;
+    const aliases = await resolveCustomerIdAliases(customerId);
     const rows = await manager.getRepository(Order).find({
-      where: { customerId },
+      where: { customerId: In(aliases.length ? aliases : [customerId]) },
       order: { createdAt: 'ASC' },
     });
     const matches = rows.filter((row) => {
@@ -103,9 +104,43 @@ export class CartService {
 
   async getOrCreateCart(customerId: string): Promise<Cart> {
     const aliases = await resolveCustomerIdAliases(customerId);
+    const carts: Cart[] = [];
     for (const id of aliases) {
       const existing = await this.cartRepo().findOne({ where: { customerId: id } });
-      if (existing) return existing;
+      if (existing) carts.push(existing);
+    }
+    if (carts.length === 1) return carts[0];
+    if (carts.length > 1) {
+      // JWT sub vs profile UUID used to create duplicate carts. Keep one, empty the rest.
+      const primary = carts[0];
+      for (const extra of carts.slice(1)) {
+        const extraItems = await this.itemRepo().find({ where: { cart: { id: extra.id } } });
+        for (const ei of extraItems) {
+          const primaryItems = await this.itemRepo().find({ where: { cart: { id: primary.id } } });
+          const key = cartLineKey(ei.productId, ei.vendorId ?? null, ei.variationId ?? null);
+          const match = primaryItems.find(
+            (i) => cartLineKey(i.productId, i.vendorId ?? null, i.variationId ?? null) === key,
+          );
+          if (match) {
+            // Prefer max qty (not sum) so consolidating duplicates does not inflate checkout.
+            match.quantity = Math.max(match.quantity, ei.quantity);
+            if (ei.metadata != null) {
+              match.metadata = { ...(match.metadata || {}), ...ei.metadata };
+            }
+            await this.itemRepo().save(match);
+          } else {
+            ei.cart = primary;
+            await this.itemRepo().save(ei);
+          }
+        }
+        await this.itemRepo()
+          .createQueryBuilder()
+          .delete()
+          .from(CartItem)
+          .where('cart_id = :id', { id: extra.id })
+          .execute();
+      }
+      return primary;
     }
     const canonical = (await canonicalCustomerId(customerId)) || String(customerId || '').trim();
     let cart = this.cartRepo().create({ id: randomUUID(), customerId: canonical });
@@ -145,16 +180,26 @@ export class CartService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-      let cart = await queryRunner.manager.findOne(Cart, { where: { customerId } });
+      const aliases = await resolveCustomerIdAliases(customerId);
+      const cartRepo = queryRunner.manager.getRepository(Cart);
+      const found: Cart[] = [];
+      for (const id of aliases) {
+        const row = await cartRepo.findOne({ where: { customerId: id } });
+        if (row) found.push(row);
+      }
+      const canonical = (await canonicalCustomerId(customerId)) || String(customerId || '').trim();
+      let cart = found[0];
       if (!cart) {
-        cart = queryRunner.manager.create(Cart, { id: randomUUID(), customerId });
-        cart = await queryRunner.manager.save(cart);
-      } else {
+        cart = cartRepo.create({ id: randomUUID(), customerId: canonical });
+        cart = await cartRepo.save(cart);
+      }
+      // Wipe every alias cart so a later GET cannot rematerialize a duplicate basket.
+      for (const c of found.length ? found : [cart]) {
         await queryRunner.manager
           .createQueryBuilder()
           .delete()
           .from(CartItem)
-          .where('cart_id = :id', { id: cart.id })
+          .where('cart_id = :id', { id: c.id })
           .execute();
       }
       for (const line of lines) {
@@ -547,6 +592,7 @@ export class CartService {
       }
       const stamp = Date.now();
       let vendorIndex = 0;
+      const orderCustomerId = (await canonicalCustomerId(customerId)) || customerId;
 
       for (const [vendorKey, vendorLines] of linesByVendor) {
         const resolvedVendor = vendorKey === '_none' ? normalizeVendorId(vendorId) : vendorKey;
@@ -568,7 +614,7 @@ export class CartService {
         const isPrimary = vendorIndex === 0;
         const order = orderRepo.create({
           id: randomUUID(),
-          customerId,
+          customerId: orderCustomerId,
           vendorId: resolvedVendor,
           orderRef: `ORD-${stamp}${linesByVendor.size > 1 ? `-${vendorIndex + 1}` : ''}`,
           status: isCod ? 'placed' : 'created',
@@ -646,6 +692,30 @@ export class CartService {
 
       const primary = created[0];
 
+      // Always clear cart after creating the order (COD and online).
+      // Leaving items for online payment caused rematerialized carts and qty merges.
+      await queryRunner.manager
+        .createQueryBuilder()
+        .delete()
+        .from(CartItem)
+        .where('cart_id = :id', { id: data.id })
+        .execute();
+      // Also clear any duplicate carts under identity aliases.
+      const aliasIds = await resolveCustomerIdAliases(customerId);
+      for (const aliasId of aliasIds) {
+        if (aliasId === data.customerId) continue;
+        const aliasCart = await queryRunner.manager.getRepository(Cart).findOne({
+          where: { customerId: aliasId },
+        });
+        if (!aliasCart) continue;
+        await queryRunner.manager
+          .createQueryBuilder()
+          .delete()
+          .from(CartItem)
+          .where('cart_id = :id', { id: aliasCart.id })
+          .execute();
+      }
+
       if (isCod) {
         if (breakdown.couponId && Number(breakdown.discount) > 0) {
           const couponSvc = new CouponService();
@@ -704,19 +774,17 @@ export class CartService {
 
         await CartService.decrementStockForLines(queryRunner.manager, lines as any[]);
         for (const order of created) {
-          const meta = { ...(order.metadata as Record<string, unknown>), stockDecremented: true };
+          const meta = { ...(order.metadata as Record<string, unknown>), stockDecremented: true, cartClearedOnPay: true };
           order.metadata = meta;
           await orderRepo.save(order);
         }
-
-        await queryRunner.manager
-          .createQueryBuilder()
-          .delete()
-          .from(CartItem)
-          .where('cart_id = :id', { id: data.id })
-          .execute();
+      } else {
+        for (const order of created) {
+          const meta = { ...(order.metadata as Record<string, unknown>), cartClearedOnPay: true };
+          order.metadata = meta;
+          await orderRepo.save(order);
+        }
       }
-      // Online: leave cart + coupon + points until payment capture (see applyDeferredCheckoutSideEffects).
 
       await queryRunner.commitTransaction();
       await this.customerReferralRewards.applyAfterFirstPurchase(customerId, primary.id).catch((error) => {
