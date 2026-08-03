@@ -202,7 +202,41 @@ export class CartService {
           .where('cart_id = :id', { id: c.id })
           .execute();
       }
+
+      // Collapse duplicate product/vendor/variation rows (max qty, not sum) before insert.
+      const productIds = [...new Set(lines.map((l) => String(l.productId || '').trim()).filter(Boolean))];
+      const products = productIds.length
+        ? await queryRunner.manager.getRepository(Product).find({ where: { id: In(productIds) } })
+        : [];
+      const productVendor = new Map(products.map((p) => [p.id, normalizeVendorId(p.vendorId)]));
+      const collapsed = new Map<string, CartLineInput>();
       for (const line of lines) {
+        const pid = String(line.productId).slice(0, 64);
+        const vid =
+          normalizeVendorId(line.vendorId) || productVendor.get(pid) || null;
+        const varId = normalizeVariationId(line.variationId);
+        const key = cartLineKey(pid, vid, varId);
+        const prev = collapsed.get(key);
+        if (prev) {
+          collapsed.set(key, {
+            ...prev,
+            quantity: Math.max(clampQty(prev.quantity), clampQty(line.quantity)),
+            unitPrice: line.unitPrice ?? prev.unitPrice,
+            metadata: { ...(prev.metadata || {}), ...(line.metadata || {}) },
+            vendorId: vid,
+          });
+        } else {
+          collapsed.set(key, {
+            ...line,
+            productId: pid,
+            vendorId: vid,
+            variationId: varId,
+            quantity: clampQty(line.quantity),
+          });
+        }
+      }
+
+      for (const line of collapsed.values()) {
         const item = queryRunner.manager.create(CartItem, {
           id: randomUUID(),
           cart,
@@ -229,7 +263,11 @@ export class CartService {
     const cart = await this.getOrCreateCart(customerId);
     const items = await this.itemRepo().find({ where: { cart: { id: cart.id } } });
     const pid = String(line.productId).slice(0, 64);
-    const vid = normalizeVendorId(line.vendorId);
+    let vid = normalizeVendorId(line.vendorId);
+    if (!vid) {
+      const product = await AppDataSource.getRepository(Product).findOne({ where: { id: pid } });
+      vid = normalizeVendorId(product?.vendorId ?? null);
+    }
     const varId = normalizeVariationId(line.variationId);
     const qty = clampQty(line.quantity);
     const price = formatPrice(line.unitPrice);
@@ -242,6 +280,7 @@ export class CartService {
       if (line.metadata != null) {
         match.metadata = { ...(match.metadata || {}), ...line.metadata };
       }
+      if (vid && !match.vendorId) match.vendorId = vid;
       await this.itemRepo().save(match);
     } else {
       const item = this.itemRepo().create({
@@ -519,28 +558,39 @@ export class CartService {
     const lineProductIds = [
       ...new Set(data.items.map((i) => i.productId).filter(Boolean) as string[]),
     ];
-    const productNameById = new Map<string, string>();
+    const productById = new Map<string, Product>();
     if (lineProductIds.length) {
       const prods = await AppDataSource.getRepository(Product).find({
         where: { id: In(lineProductIds) },
       });
-      for (const p of prods) productNameById.set(p.id, p.name);
+      for (const p of prods) productById.set(p.id, p);
     }
 
-    const lines = data.items.map((i) => ({
-      productId: i.productId,
-      vendorId: i.vendorId,
-      quantity: i.quantity,
-      unitPrice: i.unitPrice,
-      lineTotal: i.lineTotal,
-      metadata: {
-        ...(i.metadata ?? {}),
-        productName:
-          (i.metadata as Record<string, unknown> | null | undefined)?.productName ??
-          productNameById.get(i.productId) ??
-          undefined,
-      },
-    }));
+    const lines = data.items.map((i) => {
+      const product = productById.get(i.productId);
+      const resolvedVendor =
+        normalizeVendorId(i.vendorId) || normalizeVendorId(product?.vendorId ?? null);
+      if (!resolvedVendor) {
+        throw new Error(
+          `Product "${product?.name || i.productId}" has no seller assigned — cannot place order`,
+        );
+      }
+      return {
+        productId: i.productId,
+        vendorId: resolvedVendor,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        lineTotal: i.lineTotal,
+        metadata: {
+          ...(i.metadata ?? {}),
+          productName:
+            (i.metadata as Record<string, unknown> | null | undefined)?.productName ??
+            product?.name ??
+            undefined,
+          vendorId: resolvedVendor,
+        },
+      };
+    });
 
     // Split into one order per vendor so each vendor owns their lines.
     const linesByVendor = new Map<string, typeof lines>();
@@ -549,6 +599,10 @@ export class CartService {
       const bucket = linesByVendor.get(key) || [];
       bucket.push(line);
       linesByVendor.set(key, bucket);
+    }
+
+    if (linesByVendor.has('_none')) {
+      throw new Error('Cart contains items without a seller — cannot place order');
     }
 
     const profileRepo = AppDataSource.getRepository(CustomerProfile);
