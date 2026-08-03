@@ -12,6 +12,7 @@ import { Product } from '../entities/Product';
 import { CommerceQueryService } from './commerceQuery.service';
 import { PricingService, type CartPricingBreakdown } from './pricing.service';
 import { CouponService } from './coupon.service';
+import { canonicalCustomerId, resolveCustomerIdAliases } from '../utils/customerIdentity';
 
 export type CartLineInput = {
   productId: string;
@@ -101,11 +102,14 @@ export class CartService {
   }
 
   async getOrCreateCart(customerId: string): Promise<Cart> {
-    let cart = await this.cartRepo().findOne({ where: { customerId } });
-    if (!cart) {
-      cart = this.cartRepo().create({ id: randomUUID(), customerId });
-      cart = await this.cartRepo().save(cart);
+    const aliases = await resolveCustomerIdAliases(customerId);
+    for (const id of aliases) {
+      const existing = await this.cartRepo().findOne({ where: { customerId: id } });
+      if (existing) return existing;
     }
+    const canonical = (await canonicalCustomerId(customerId)) || String(customerId || '').trim();
+    let cart = this.cartRepo().create({ id: randomUUID(), customerId: canonical });
+    cart = await this.cartRepo().save(cart);
     return cart;
   }
 
@@ -235,8 +239,10 @@ export class CartService {
   }
 
   async clearCart(customerId: string) {
-    const cart = await this.cartRepo().findOne({ where: { customerId } });
-    if (cart) {
+    const aliases = await resolveCustomerIdAliases(customerId);
+    for (const id of aliases) {
+      const cart = await this.cartRepo().findOne({ where: { customerId: id } });
+      if (!cart) continue;
       await this.itemRepo()
         .createQueryBuilder()
         .delete()

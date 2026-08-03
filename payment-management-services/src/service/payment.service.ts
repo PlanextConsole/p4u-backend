@@ -88,49 +88,56 @@ export class PaymentService {
       .digest('hex');
 
     const verified = generated === input.signature;
-    if (!verified) return { verified: false };
+    if (!verified) return { verified: false, commerceConfirmed: false };
 
     const repo = AppDataSource.getRepository(PaymentIntent);
     const row = await repo.findOne({ where: { providerRef: input.orderId } });
-    if (row) {
-      row.status = 'captured';
-      row.providerPaymentId = input.paymentId;
-      row.providerSignature = input.signature;
-      await repo.save(row);
-
-      const metadata = (row.metadata && typeof row.metadata === 'object' ? row.metadata : {}) as Record<string, any>;
-      const productOrderId = String(
-        metadata.productOrderId || (metadata.orderType === 'product' || metadata.domain === 'product' ? row.orderId : '') || '',
-      ).trim();
-      if (productOrderId) {
-        const secret =
-          process.env.PRODUCT_PAYMENT_WEBHOOK_SECRET || process.env.FOOD_PAYMENT_WEBHOOK_SECRET || '';
-        if (!secret) {
-          throw new Error('Product payment callback secret is not configured');
-        }
-        {
-          const callback = JSON.stringify({
-            eventId: `verify_${row.id}`,
-            productOrderId,
-            providerOrderId: input.orderId,
-            providerPaymentId: input.paymentId,
-            status: 'success',
-          });
-          await axios.post(
-              `${process.env.COMMERCE_SERVICE_URL || 'http://localhost:8086'}/api/v1/commerce/product-payments/webhook`,
-              callback,
-              {
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-product-signature': crypto.createHmac('sha256', secret).update(callback).digest('hex'),
-                },
-                timeout: 15000,
-              },
-            );
-        }
-      }
+    if (!row) {
+      return { verified: true, intentId: null, commerceConfirmed: false };
     }
-    return { verified: true, intentId: row?.id ?? null, commerceConfirmed: true };
+
+    row.status = 'captured';
+    row.providerPaymentId = input.paymentId;
+    row.providerSignature = input.signature;
+    await repo.save(row);
+
+    const metadata = (row.metadata && typeof row.metadata === 'object' ? row.metadata : {}) as Record<string, any>;
+    const productOrderId = String(
+      metadata.productOrderId || (metadata.orderType === 'product' || metadata.domain === 'product' ? row.orderId : '') || '',
+    ).trim();
+
+    let commerceConfirmed = false;
+    if (productOrderId) {
+      const secret =
+        process.env.PRODUCT_PAYMENT_WEBHOOK_SECRET || process.env.FOOD_PAYMENT_WEBHOOK_SECRET || '';
+      if (!secret) {
+        throw new Error('Product payment callback secret is not configured');
+      }
+      const callback = JSON.stringify({
+        eventId: `verify_${row.id}`,
+        productOrderId,
+        providerOrderId: input.orderId,
+        providerPaymentId: input.paymentId,
+        status: 'success',
+      });
+      await axios.post(
+        `${process.env.COMMERCE_SERVICE_URL || 'http://localhost:8086'}/api/v1/commerce/product-payments/webhook`,
+        callback,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-product-signature': crypto.createHmac('sha256', secret).update(callback).digest('hex'),
+          },
+          timeout: 15000,
+        },
+      );
+      commerceConfirmed = true;
+    } else {
+      // Non-product intents (plans, etc.) do not need the commerce product webhook.
+      commerceConfirmed = true;
+    }
+
+    return { verified: true, intentId: row.id, commerceConfirmed };
   }
 
   async refundPayment(input: { orderId: string; amount: string; reason?: string }) {

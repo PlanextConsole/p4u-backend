@@ -1,6 +1,7 @@
 import { expressjwt, GetVerificationKey } from 'express-jwt';
 import { expressJwtSecret } from 'jwks-rsa';
 import { Request, Response, NextFunction } from 'express';
+import { resolveCustomerIdAliases } from '../utils/customerIdentity';
 
 /** Accept tokens whether Keycloak iss is public URL, internal URL, or localhost (common VPS mismatch). */
 function keycloakJwtConfig() {
@@ -115,11 +116,21 @@ export const requireCustomerSelfOrAdmin = (customerParam = 'customerId') => {
     if (!auth) return res.status(401).json({ message: 'Unauthorized' });
     const roles = getRoles(auth);
     if (roles.includes('ADMIN')) return next();
-    const tokenCustomerId = String(auth.customer_id || auth.sub || '');
-    const requestedCustomerId = String(req.params[customerParam] || '');
-    if (!tokenCustomerId || !requestedCustomerId || tokenCustomerId !== requestedCustomerId) {
+    const tokenCustomerId = String(auth.customer_id || auth.sub || '').trim();
+    const requestedCustomerId = String(req.params[customerParam] || '').trim();
+    if (!tokenCustomerId || !requestedCustomerId) {
       return res.status(403).json({ message: 'Forbidden: customer self access required' });
     }
-    next();
+    if (tokenCustomerId === requestedCustomerId) return next();
+    void resolveCustomerIdAliases(tokenCustomerId)
+      .then((aliases) => {
+        if (aliases.includes(requestedCustomerId)) return next();
+        return resolveCustomerIdAliases(requestedCustomerId).then((requestedAliases) => {
+          const overlap = requestedAliases.some((id) => aliases.includes(id));
+          if (overlap) return next();
+          return res.status(403).json({ message: 'Forbidden: customer self access required' });
+        });
+      })
+      .catch(() => res.status(403).json({ message: 'Forbidden: customer self access required' }));
   };
 };

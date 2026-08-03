@@ -2,26 +2,15 @@ import { randomUUID } from 'crypto';
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Order } from '../entities/Order';
-import { CustomerProfile } from '../entities/CustomerProfile';
 import { CustomerReferralRewardService } from './customerReferralReward.service';
+import { resolveCustomerIdAliases } from '../utils/customerIdentity';
 
 export class CommerceQueryService {
   private customerReferralRewards = new CustomerReferralRewardService();
 
   /** Resolve JWT sub / profile id aliases so order lists don't miss rows. */
   private async customerIdAliases(customerId: string): Promise<string[]> {
-    const id = String(customerId || '').trim();
-    if (!id) return [];
-    const ids = new Set<string>([id]);
-    const profileRepo = AppDataSource.getRepository(CustomerProfile);
-    const byId = await profileRepo.findOne({ where: { id } });
-    const byKeycloak =
-      byId ?? (await profileRepo.findOne({ where: { keycloakUserId: id } }));
-    if (byKeycloak) {
-      ids.add(byKeycloak.id);
-      if (byKeycloak.keycloakUserId) ids.add(String(byKeycloak.keycloakUserId));
-    }
-    return [...ids];
+    return resolveCustomerIdAliases(customerId);
   }
 
   async listCustomerOrders(customerId: string, limit: number, offset: number) {
