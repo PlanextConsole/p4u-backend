@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CustomerRegisterByPhoneRequest {
@@ -10,6 +10,12 @@ export class CustomerRegisterByPhoneRequest {
   @IsString()
   @MaxLength(200)
   fullName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8, { message: 'password must be at least 8 characters' })
+  @MaxLength(128)
+  password?: string;
 
   @IsOptional()
   @IsEmail({}, { message: 'email must be a valid email' })

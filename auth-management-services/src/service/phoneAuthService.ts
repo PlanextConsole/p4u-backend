@@ -117,6 +117,7 @@ export interface PhoneExchangeResult {
 export interface CustomerRegistrationPayload {
   registrationToken: string;
   fullName: string;
+  password?: string;
   email?: string | null;
   state?: string | null;
   district?: string | null;
@@ -675,6 +676,13 @@ export class PhoneAuthService {
             },
       );
 
+      if (payload.password) {
+        await this.keycloakAdmin.users.resetPassword({
+          id: keycloakUserId,
+          credential: { type: 'password', value: payload.password, temporary: false },
+        });
+      }
+
       await this.persistPhoneSignupCustomerRecords({
         keycloakUserId,
         keycloakUsername,
@@ -700,7 +708,7 @@ export class PhoneAuthService {
             // 64 random hex chars — never exposed to the user, never used to
             // log in. We rely on Keycloak admin-issued tokens via direct grant
             // below for this account.
-            value: crypto.randomBytes(32).toString('hex'),
+            value: payload.password ?? crypto.randomBytes(32).toString('hex'),
             temporary: false,
           },
         ],

@@ -71,4 +71,17 @@ export async function ensureSocioSchema(): Promise<void> {
     payload_json JSON NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     KEY idx_social_call_signal (call_id,sequence_no),
     CONSTRAINT fk_social_call_signal FOREIGN KEY(call_id) REFERENCES social_calls(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);}
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await AppDataSource.query(`CREATE TABLE IF NOT EXISTS social_content_reports (
+    id CHAR(36) NOT NULL PRIMARY KEY, reporter_id VARCHAR(128) NOT NULL,
+    target_type VARCHAR(16) NOT NULL, target_id VARCHAR(36) NOT NULL,
+    reason VARCHAR(32) NOT NULL, details VARCHAR(500) NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'pending', moderator_id VARCHAR(128) NULL,
+    moderator_note VARCHAR(500) NULL, moderation_action VARCHAR(24) NULL,
+    resolved_at DATETIME(6) NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uq_social_report_reporter_target (reporter_id,target_type,target_id),
+    KEY idx_social_reports_status (status,created_at), KEY idx_social_reports_target (target_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+}

@@ -308,6 +308,7 @@ export const createAuthRoutes = (
         const auth = await phoneAuthService.registerCustomer({
           registrationToken: dto.registrationToken,
           fullName: dto.fullName,
+          password: dto.password,
           email: dto.email ?? null,
           state: dto.state ?? null,
           district: dto.district ?? null,

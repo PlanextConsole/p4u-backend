@@ -6,6 +6,7 @@ import { SocioProfileService } from '../service/socioProfile.service';
 import { MessageService } from '../service/message.service';
 import { SocioSettingsService } from '../service/socioSettings.service';
 import { CallService } from '../service/call.service';
+import { ModerationService } from '../service/moderation.service';
 import { jwtAuth, requireAnyRole, requirePermission } from '../middleware/authMiddleware';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden } from '../middleware/responseEnvelope';
 
@@ -54,6 +55,7 @@ export function createSocioRoutes(): Router {
   const messageSvc = new MessageService();
   const settingsSvc = new SocioSettingsService();
   const callSvc = new CallService();
+  const moderationSvc = new ModerationService();
 
   /* ───── public health ───── */
   router.get('/public/health', (_req: Request, res: Response) => {
@@ -351,6 +353,68 @@ export function createSocioRoutes(): Router {
         throw err;
       }
     }
+  );
+
+  router.post(
+    '/reports',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.interact'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const report = await moderationSvc.report(
+          userId,
+          String(req.body?.targetType || '').toLowerCase(),
+          String(req.body?.targetId || '').trim(),
+          String(req.body?.reason || '').toLowerCase(),
+          typeof req.body?.details === 'string' ? req.body.details : undefined,
+        );
+        sendCreated(res, report);
+      } catch (err) {
+        const code = (err as Error & { statusCode?: number }).statusCode;
+        const message = err instanceof Error ? err.message : 'Unable to submit report';
+        if (code === 404) return sendNotFound(res, message);
+        if (code === 409) return res.status(409).json({ message });
+        if (code === 400) return sendBadRequest(res, message);
+        throw err;
+      }
+    },
+  );
+
+  router.get(
+    '/moderation/reports',
+    requireAnyRole(['ADMIN']),
+    async (req: Request, res: Response) => {
+      const { limit, offset } = parsePaging(req);
+      const result = await moderationSvc.list(typeof req.query.status === 'string' ? req.query.status : undefined, limit, offset);
+      sendSuccess(res, result);
+    },
+  );
+
+  router.patch(
+    '/moderation/reports/:reportId',
+    requireAnyRole(['ADMIN']),
+    async (req: Request, res: Response) => {
+      const moderatorId = userIdFromAuth(req);
+      if (!moderatorId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const report = await moderationSvc.moderate(
+          req.params.reportId,
+          moderatorId,
+          String(req.body?.status || '').toLowerCase(),
+          String(req.body?.action || 'none').toLowerCase(),
+          typeof req.body?.note === 'string' ? req.body.note : undefined,
+        );
+        sendSuccess(res, report);
+      } catch (err) {
+        const code = (err as Error & { statusCode?: number }).statusCode;
+        const message = err instanceof Error ? err.message : 'Unable to moderate report';
+        if (code === 404) return sendNotFound(res, message);
+        if (code === 400) return sendBadRequest(res, message);
+        throw err;
+      }
+    },
   );
 
   router.get(
