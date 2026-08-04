@@ -267,10 +267,23 @@ export function createCommerceRoutes(): Router {
       try {
         const redeemPoints = Number(req.body?.redeemPoints ?? 0);
         const couponCode = String(req.body?.couponCode || req.body?.coupon || '').trim() || undefined;
+        const rawItems = Array.isArray(req.body?.items) ? req.body.items : undefined;
+        const items = rawItems
+          ?.map((row: any) => ({
+            productId: String(row?.productId || '').trim(),
+            quantity: Number(row?.quantity || 0),
+            unitPrice: row?.unitPrice,
+            vendorId: row?.vendorId != null && String(row.vendorId).trim() !== '' ? String(row.vendorId) : null,
+            variationId: row?.variationId != null && String(row.variationId).trim() !== '' ? String(row.variationId) : null,
+            metadata: row?.metadata && typeof row.metadata === 'object' ? row.metadata : null,
+          }))
+          .filter((row: { productId: string; quantity: number }) => row.productId && row.quantity > 0);
         const quote = await cartSvc.quoteCart(customerId, {
           redeemPoints: Number.isFinite(redeemPoints) && redeemPoints > 0 ? redeemPoints : 0,
           couponCode,
           vendorId: req.body?.vendorId ? String(req.body.vendorId) : undefined,
+          items,
+          syncCart: req.body?.syncCart !== false,
         });
         sendSuccess(res, quote);
       } catch (e: any) {

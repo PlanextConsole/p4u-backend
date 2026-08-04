@@ -74,24 +74,120 @@ export class CartService {
     return matches.length === 1 ? primary : Object.assign(primary, { orders: matches });
   }
 
+  /**
+   * Collapse duplicate product lines that only differ by missing/partial vendorId.
+   * Those duplicates were quoting as 2× price while the UI showed a single row.
+   */
+  private async normalizeCartLines(
+    lines: Array<{
+      productId: string;
+      vendorId?: string | null;
+      variationId?: string | null;
+      quantity: number;
+      unitPrice: string | number;
+      metadata?: Record<string, unknown> | null;
+    }>,
+  ): Promise<CartLineInput[]> {
+    const productIds = [...new Set(lines.map((l) => String(l.productId || '').trim()).filter(Boolean))];
+    const products = productIds.length
+      ? await AppDataSource.getRepository(Product).find({ where: { id: In(productIds) } })
+      : [];
+    const productVendor = new Map(products.map((p) => [p.id, normalizeVendorId(p.vendorId)]));
+    const collapsed = new Map<string, CartLineInput>();
+    for (const line of lines) {
+      const pid = String(line.productId || '').trim().slice(0, 64);
+      if (!pid) continue;
+      const vid =
+        normalizeVendorId(line.vendorId) || productVendor.get(pid) || null;
+      const varId = normalizeVariationId(line.variationId);
+      // Key by product + variation only so null-vendor and real-vendor dupes merge.
+      const key = `${pid}::${varId ?? ''}`;
+      const prev = collapsed.get(key);
+      if (prev) {
+        collapsed.set(key, {
+          ...prev,
+          quantity: Math.max(clampQty(prev.quantity), clampQty(line.quantity)),
+          unitPrice: line.unitPrice ?? prev.unitPrice,
+          vendorId: normalizeVendorId(prev.vendorId) || vid,
+          metadata: { ...(prev.metadata || {}), ...(line.metadata || {}) },
+          variationId: varId,
+        });
+      } else {
+        collapsed.set(key, {
+          productId: pid,
+          vendorId: vid,
+          variationId: varId,
+          quantity: clampQty(line.quantity),
+          unitPrice: line.unitPrice,
+          metadata: line.metadata ?? null,
+        });
+      }
+    }
+    return [...collapsed.values()];
+  }
+
   /** Returns a full pre-checkout breakdown without persisting anything. */
   async quoteCart(
     customerId: string,
-    opts: { redeemPoints?: number; couponCode?: string; vendorId?: string } = {},
+    opts: {
+      redeemPoints?: number;
+      couponCode?: string;
+      vendorId?: string;
+      /** When provided, price these lines (UI source of truth) instead of a possibly stale DB cart. */
+      items?: CartLineInput[];
+      /** Persist items into the cart before quoting (keeps checkout + quote aligned). */
+      syncCart?: boolean;
+    } = {},
   ): Promise<CartPricingBreakdown & { cartId: string }> {
-    const data = await this.getCartResponse(customerId);
+    let cartId = '';
+    let pricedLines: CartLineInput[];
+
+    if (opts.items && opts.items.length) {
+      pricedLines = await this.normalizeCartLines(opts.items);
+      if (opts.syncCart !== false) {
+        const synced = await this.replaceCart(customerId, pricedLines);
+        cartId = synced.id;
+        pricedLines = await this.normalizeCartLines(
+          synced.items.map((i) => ({
+            productId: i.productId,
+            vendorId: i.vendorId,
+            variationId: i.variationId,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            metadata: i.metadata,
+          })),
+        );
+      } else {
+        const data = await this.getCartResponse(customerId);
+        cartId = data.id;
+      }
+    } else {
+      const data = await this.getCartResponse(customerId);
+      cartId = data.id;
+      pricedLines = await this.normalizeCartLines(
+        data.items.map((i) => ({
+          productId: i.productId,
+          vendorId: i.vendorId,
+          variationId: i.variationId,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          metadata: i.metadata,
+        })),
+      );
+    }
+
     const breakdown = await this.pricing.priceCart(
       customerId,
-      data.items.map((i) => ({
+      pricedLines.map((i) => ({
         productId: i.productId,
-        vendorId: i.vendorId,
+        vendorId: i.vendorId ?? null,
         quantity: i.quantity,
         unitPrice: i.unitPrice,
         metadata: i.metadata,
       })),
       opts,
     );
-    return { ...breakdown, cartId: data.id };
+    return { ...breakdown, cartId };
   }
 
   private cartRepo() {
@@ -154,28 +250,52 @@ export class CartService {
       where: { cart: { id: cart.id } },
       order: { createdAt: 'ASC' },
     });
-    const lines = items.map((i) => ({
-      id: i.id,
-      productId: i.productId,
-      vendorId: i.vendorId,
-      variationId: i.variationId ?? null,
-      quantity: i.quantity,
-      unitPrice: i.unitPrice,
-      metadata: i.metadata,
-      lineTotal: (Number(i.unitPrice) * i.quantity).toFixed(2),
-    }));
+    const normalized = await this.normalizeCartLines(
+      items.map((i) => ({
+        productId: i.productId,
+        vendorId: i.vendorId,
+        variationId: i.variationId ?? null,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        metadata: i.metadata,
+      })),
+    );
+
+    // Persist collapse when DB still has duplicate product rows.
+    if (normalized.length !== items.length) {
+      return this.replaceCart(customerId, normalized);
+    }
+
+    const byKey = new Map(
+      items.map((i) => [`${i.productId}::${i.variationId ?? ''}`, i] as const),
+    );
+    const lines = normalized.map((i) => {
+      const hit = byKey.get(`${i.productId}::${i.variationId ?? ''}`);
+      const unit = formatPrice(i.unitPrice);
+      return {
+        id: hit?.id || randomUUID(),
+        productId: i.productId,
+        vendorId: i.vendorId ?? null,
+        variationId: i.variationId ?? null,
+        quantity: i.quantity,
+        unitPrice: unit,
+        metadata: i.metadata ?? null,
+        lineTotal: (Number(unit) * i.quantity).toFixed(2),
+      };
+    });
     const subtotal = lines.reduce((s, l) => s + Number(l.lineTotal), 0);
     return {
       id: cart.id,
       customerId: cart.customerId,
       items: lines,
-      itemCount: items.reduce((s, i) => s + i.quantity, 0),
+      itemCount: lines.reduce((s, i) => s + i.quantity, 0),
       subtotal: subtotal.toFixed(2),
       currency: 'INR',
     };
   }
 
   async replaceCart(customerId: string, lines: CartLineInput[]) {
+    const collapsed = await this.normalizeCartLines(lines);
     const queryRunner = AppDataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -203,40 +323,7 @@ export class CartService {
           .execute();
       }
 
-      // Collapse duplicate product/vendor/variation rows (max qty, not sum) before insert.
-      const productIds = [...new Set(lines.map((l) => String(l.productId || '').trim()).filter(Boolean))];
-      const products = productIds.length
-        ? await queryRunner.manager.getRepository(Product).find({ where: { id: In(productIds) } })
-        : [];
-      const productVendor = new Map(products.map((p) => [p.id, normalizeVendorId(p.vendorId)]));
-      const collapsed = new Map<string, CartLineInput>();
-      for (const line of lines) {
-        const pid = String(line.productId).slice(0, 64);
-        const vid =
-          normalizeVendorId(line.vendorId) || productVendor.get(pid) || null;
-        const varId = normalizeVariationId(line.variationId);
-        const key = cartLineKey(pid, vid, varId);
-        const prev = collapsed.get(key);
-        if (prev) {
-          collapsed.set(key, {
-            ...prev,
-            quantity: Math.max(clampQty(prev.quantity), clampQty(line.quantity)),
-            unitPrice: line.unitPrice ?? prev.unitPrice,
-            metadata: { ...(prev.metadata || {}), ...(line.metadata || {}) },
-            vendorId: vid,
-          });
-        } else {
-          collapsed.set(key, {
-            ...line,
-            productId: pid,
-            vendorId: vid,
-            variationId: varId,
-            quantity: clampQty(line.quantity),
-          });
-        }
-      }
-
-      for (const line of collapsed.values()) {
+      for (const line of collapsed) {
         const item = queryRunner.manager.create(CartItem, {
           id: randomUUID(),
           cart,
@@ -256,7 +343,31 @@ export class CartService {
     } finally {
       await queryRunner.release();
     }
-    return this.getCartResponse(customerId);
+    // Build response without re-entering replace via duplicate detection.
+    const cart = await this.getOrCreateCart(customerId);
+    const items = await this.itemRepo().find({
+      where: { cart: { id: cart.id } },
+      order: { createdAt: 'ASC' },
+    });
+    const mapped = items.map((i) => ({
+      id: i.id,
+      productId: i.productId,
+      vendorId: i.vendorId,
+      variationId: i.variationId ?? null,
+      quantity: i.quantity,
+      unitPrice: i.unitPrice,
+      metadata: i.metadata,
+      lineTotal: (Number(i.unitPrice) * i.quantity).toFixed(2),
+    }));
+    const subtotal = mapped.reduce((s, l) => s + Number(l.lineTotal), 0);
+    return {
+      id: cart.id,
+      customerId: cart.customerId,
+      items: mapped,
+      itemCount: mapped.reduce((s, i) => s + i.quantity, 0),
+      subtotal: subtotal.toFixed(2),
+      currency: 'INR',
+    };
   }
 
   async addItem(customerId: string, line: CartLineInput) {
@@ -655,14 +766,11 @@ export class CartService {
         // Allocate coupon/points proportionally across vendor orders; primary order holds redeem bookkeeping.
         const share =
           Number(breakdown.itemSubtotal) > 0 ? vendorSubtotal / Number(breakdown.itemSubtotal) : 1 / linesByVendor.size;
-        // Prefer vendor row totals when available; else line sum.
-        let amount = vendorBreakdown
-          ? Number(vendorBreakdown.subtotal) -
-            Number(breakdown.discount) * share +
-            Number(breakdown.deliveryFee || 0) * share +
-            Number(breakdown.platformFee || 0) * share -
-            Number(breakdown.pointsRedeemedValue || 0) * share
-          : vendorSubtotal;
+        // Charge the customer the full quote share (items + fees + GST − discounts).
+        let amount =
+          Number(breakdown.itemSubtotal) > 0
+            ? Number(breakdown.grandTotal) * share
+            : Number(breakdown.grandTotal) / Math.max(1, linesByVendor.size);
         if (!Number.isFinite(amount) || amount < 0) amount = Math.max(0, vendorSubtotal);
 
         const isPrimary = vendorIndex === 0;
