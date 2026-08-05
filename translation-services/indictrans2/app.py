@@ -61,7 +61,10 @@ def protect(text: str):
 
 def restore(text: str, values: list[str]):
     for index, value in enumerate(values):
-        text = re.sub(rf"__\s*P4U\s*{index}\s*__", lambda _: value, text, flags=re.IGNORECASE)
+        # IndicTrans tokenization may render ``__P4U0__`` as
+        # ``_ _ P4U0 _ _``. Accept both forms when restoring protected data.
+        placeholder = rf"_\s*_\s*P4U\s*{index}\s*_\s*_"
+        text = re.sub(placeholder, lambda _: value, text, flags=re.IGNORECASE)
     return text
 
 
