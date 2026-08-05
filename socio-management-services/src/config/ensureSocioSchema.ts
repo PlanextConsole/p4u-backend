@@ -55,6 +55,19 @@ export async function ensureSocioSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  await AppDataSource.query(`
+    CREATE TABLE IF NOT EXISTS social_message_translations (
+      message_id CHAR(36) NOT NULL,
+      target_language VARCHAR(8) NOT NULL,
+      source_language VARCHAR(8) NOT NULL,
+      translated_text TEXT NOT NULL,
+      created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+      updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+      PRIMARY KEY (message_id, target_language),
+      CONSTRAINT fk_social_translation_message FOREIGN KEY (message_id) REFERENCES social_messages(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   await AppDataSource.query(`CREATE TABLE IF NOT EXISTS social_calls (
     id CHAR(36) NOT NULL PRIMARY KEY, conversation_id CHAR(36) NOT NULL,
     caller_id VARCHAR(128) NOT NULL, callee_id VARCHAR(128) NOT NULL,
@@ -88,6 +101,17 @@ export async function ensureSocioSchema(): Promise<void> {
 
 /** Postgres-safe DDL for moderation reports (MySQL ensureSocioSchema is skipped on postgres). */
 export async function ensureSocioPostgresSchema(): Promise<void> {
+  await AppDataSource.query(`
+    CREATE TABLE IF NOT EXISTS social_message_translations (
+      message_id VARCHAR(36) NOT NULL REFERENCES social_messages(id) ON DELETE CASCADE,
+      target_language VARCHAR(8) NOT NULL,
+      source_language VARCHAR(8) NOT NULL,
+      translated_text TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (message_id, target_language)
+    )
+  `);
   await AppDataSource.query(`
     CREATE TABLE IF NOT EXISTS social_content_reports (
       id VARCHAR(36) PRIMARY KEY,

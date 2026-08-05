@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+torch>=2.2.0
+transformers==4.51.3
+sentencepiece>=0.2.0
+indic-nlp-library-itt==0.1.1
+sacremoses==0.1.1
+regex>=2024.11.6

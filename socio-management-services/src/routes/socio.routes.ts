@@ -7,6 +7,7 @@ import { MessageService } from '../service/message.service';
 import { SocioSettingsService } from '../service/socioSettings.service';
 import { CallService } from '../service/call.service';
 import { ModerationService } from '../service/moderation.service';
+import { MessageTranslationService } from '../service/messageTranslation.service';
 import { jwtAuth, requireAnyRole, requirePermission } from '../middleware/authMiddleware';
 import { sendSuccess, sendCreated, sendNotFound, sendBadRequest, sendForbidden } from '../middleware/responseEnvelope';
 
@@ -56,6 +57,7 @@ export function createSocioRoutes(): Router {
   const settingsSvc = new SocioSettingsService();
   const callSvc = new CallService();
   const moderationSvc = new ModerationService();
+  const messageTranslationSvc = new MessageTranslationService();
 
   /* ───── public health ───── */
   router.get('/public/health', (_req: Request, res: Response) => {
@@ -676,6 +678,30 @@ export function createSocioRoutes(): Router {
       } catch (err) {
         if (handleInteractionError(res, err)) return;
         throw err;
+      }
+    },
+  );
+
+  router.post(
+    '/messages/:messageId/translate',
+    requireAnyRole(['ADMIN', 'CUSTOMER', 'VENDOR']),
+    requirePermission('social.feed.read'),
+    async (req: Request, res: Response) => {
+      const userId = userIdFromAuth(req);
+      if (!userId) return sendBadRequest(res, 'user id missing in token');
+      try {
+        const result = await messageTranslationSvc.translate(
+          userId,
+          req.params.messageId,
+          String(req.body?.targetLanguage || ''),
+        );
+        sendSuccess(res, result);
+      } catch (err) {
+        const statusCode = (err as Error & { statusCode?: number })?.statusCode;
+        const message = err instanceof Error ? err.message : 'Translation failed';
+        if (statusCode === 404) return sendNotFound(res, message);
+        if (statusCode === 400) return sendBadRequest(res, message);
+        res.status(statusCode || 500).json({ success: false, error: { message } });
       }
     },
   );

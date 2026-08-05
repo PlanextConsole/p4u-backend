@@ -19,3 +19,17 @@ services:
       - "host.docker.internal:host-gateway"
     command: start-dev
 
+  indictrans2:
+    profiles: ["translation"]
+    build:
+      context: ./translation-services/indictrans2
+    container_name: p4u_indictrans2
+    ports:
+      - "8091:8091"
+    volumes:
+      - indictrans2_cache:/root/.cache/huggingface
+    restart: unless-stopped
+
+volumes:
+  indictrans2_cache:
+
