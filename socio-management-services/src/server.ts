@@ -8,7 +8,7 @@ import { DiscoveryRegistration } from './service/discoveryRegistration';
 import { AppDataSource } from './config/database';
 import { ensureSocioUploadDir } from './config/uploadPaths';
 import { repairAndMigrateSocioMedia } from './config/repairSocioMediaStorage';
-import { ensureSocioSchema } from './config/ensureSocioSchema';
+import { ensureSocioSchema, ensureSocioPostgresSchema } from './config/ensureSocioSchema';
 
 dotenv.config();
 
@@ -60,7 +60,8 @@ async function startServer() {
       await ensureSocioSchema();
       await repairAndMigrateSocioMedia();
     } else {
-      console.log('[socio-service] MySQL schema repair skipped on postgres');
+      await ensureSocioPostgresSchema();
+      console.log('[socio-service] Postgres schema ensure complete (reports)');
     }
     app.listen(PORT, async () => {
       try {

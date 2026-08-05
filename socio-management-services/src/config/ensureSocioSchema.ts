@@ -85,3 +85,36 @@ export async function ensureSocioSchema(): Promise<void> {
     KEY idx_social_reports_status (status,created_at), KEY idx_social_reports_target (target_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 }
+
+/** Postgres-safe DDL for moderation reports (MySQL ensureSocioSchema is skipped on postgres). */
+export async function ensureSocioPostgresSchema(): Promise<void> {
+  await AppDataSource.query(`
+    CREATE TABLE IF NOT EXISTS social_content_reports (
+      id VARCHAR(36) PRIMARY KEY,
+      reporter_id VARCHAR(128) NOT NULL,
+      target_type VARCHAR(16) NOT NULL,
+      target_id VARCHAR(36) NOT NULL,
+      reason VARCHAR(32) NOT NULL,
+      details VARCHAR(500) NULL,
+      status VARCHAR(24) NOT NULL DEFAULT 'pending',
+      moderator_id VARCHAR(128) NULL,
+      moderator_note VARCHAR(500) NULL,
+      moderation_action VARCHAR(24) NULL,
+      resolved_at TIMESTAMP NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await AppDataSource.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_social_report_reporter_target
+      ON social_content_reports (reporter_id, target_type, target_id)
+  `);
+  await AppDataSource.query(`
+    CREATE INDEX IF NOT EXISTS idx_social_reports_status
+      ON social_content_reports (status, created_at)
+  `);
+  await AppDataSource.query(`
+    CREATE INDEX IF NOT EXISTS idx_social_reports_target
+      ON social_content_reports (target_id)
+  `);
+}

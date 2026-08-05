@@ -40,7 +40,7 @@ export class ContentReport {
   @Column({ name: 'moderation_action', type: 'varchar', length: 24, nullable: true })
   moderationAction!: string | null;
 
-  @Column({ name: 'resolved_at', type: 'datetime', nullable: true })
+  @Column({ name: 'resolved_at', type: 'timestamp', nullable: true })
   resolvedAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
