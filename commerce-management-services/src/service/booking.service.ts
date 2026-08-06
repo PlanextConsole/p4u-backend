@@ -5,6 +5,7 @@ import { Booking } from '../entities/Booking';
 import { Vendor } from '../entities/Vendor';
 import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { CustomerProfile } from '../entities/CustomerProfile';
+import { Settlement } from '../entities/Settlement';
 import {
   buildSlotsForDate,
   businessNowMinutes,
@@ -426,6 +427,47 @@ export class BookingService {
     return { bookingId, otp: completionOtp(bookingId, String(proof.otpNonce)), expiresAt: proof.otpExpiresAt };
   }
 
+  private async ensureBookingSettlement(
+    manager: typeof AppDataSource.manager,
+    booking: Booking,
+  ) {
+    if (!booking.vendorId) return;
+    const settlementRepo = manager.getRepository(Settlement);
+    const recent = await settlementRepo.find({
+      where: { vendorId: booking.vendorId, settlementType: 'cash' },
+      order: { createdAt: 'DESC' },
+      take: 100,
+    });
+    const existing = recent.find((row) => {
+      const md = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      return String((md as Record<string, unknown>).bookingId || '') === booking.id;
+    });
+    if (existing) return existing;
+
+    const bookingRef = `BKG-${booking.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+    const meta = bookingMeta(booking);
+    return settlementRepo.save(
+      settlementRepo.create({
+        id: randomUUID(),
+        vendorId: booking.vendorId,
+        orderId: null,
+        settlementType: 'cash',
+        status: 'pending',
+        amount: String(booking.totalAmount || '0'),
+        metadata: {
+          source: 'booking',
+          bookingId: booking.id,
+          bookingRef,
+          orderRef: bookingRef,
+          serviceId: booking.serviceId,
+          serviceName: meta.serviceName || meta.service_name || null,
+          vendorSubtotal: Number(booking.totalAmount || 0),
+          commissionTotal: 0,
+        },
+      }),
+    );
+  }
+
   async confirmCompletion(customerId: string, bookingId: string, accept: boolean, reason?: string) {
     return AppDataSource.transaction(async manager => {
       const repo = manager.getRepository(Booking);
@@ -433,7 +475,10 @@ export class BookingService {
       if (!row) throw new Error('Booking not found');
       const meta = bookingMeta(row);
       const proof = { ...(meta.completionProof || {}) } as Record<string, any>;
-      if (accept && row.status === 'completed' && proof.customerConfirmedAt) return { ...row, duplicate: true };
+      if (accept && row.status === 'completed' && proof.customerConfirmedAt) {
+        await this.ensureBookingSettlement(manager, row);
+        return { ...row, duplicate: true };
+      }
       if (row.status !== 'completion_pending_confirmation') throw new Error('Vendor OTP verification is required before confirmation');
       const now = new Date().toISOString();
       if (accept) {
@@ -446,7 +491,9 @@ export class BookingService {
         row.status = 'disputed';
       }
       row.metadata = { ...meta, completionProof: proof };
-      return repo.save(row);
+      const saved = await repo.save(row);
+      if (accept) await this.ensureBookingSettlement(manager, saved);
+      return saved;
     });
   }
 
@@ -479,7 +526,9 @@ export class BookingService {
       if (!['customer', 'vendor'].includes(resolution)) throw new Error('Resolution must be customer or vendor');
       dispute.status = 'resolved'; dispute.resolution = resolution; dispute.note = String(note || '').trim(); dispute.resolvedAt = new Date().toISOString();
       row.status = resolution === 'vendor' ? 'completed' : 'dispute_resolved'; row.metadata = { ...meta, dispute };
-      return repo.save(row);
+      const saved = await repo.save(row);
+      if (resolution === 'vendor') await this.ensureBookingSettlement(manager, saved);
+      return saved;
     });
   }
   async cancelBooking(customerId: string, bookingId: string): Promise<Booking> {
@@ -505,8 +554,13 @@ export class BookingService {
 
   async updateBookingStatusForVendor(vendorId: string, bookingId: string, nextStatus: string): Promise<Booking> {
     const status = String(nextStatus || '').trim().toLowerCase();
-    const allowed = new Set(['approved', 'rejected', 'in_progress', 'completed', 'cancelled']);
-    if (!allowed.has(status)) throw new Error(`Invalid status: ${status}`);
+    const allowed = new Set(['approved', 'rejected', 'in_progress', 'cancelled']);
+    if (!allowed.has(status)) {
+      if (status === 'completed') {
+        throw new Error('Use completion proof and customer OTP to complete this booking');
+      }
+      throw new Error(`Invalid status: ${status}`);
+    }
 
     const row = await this.repo.findOne({ where: { id: bookingId, vendorId } });
     if (!row) throw new Error('Booking not found');
@@ -522,10 +576,6 @@ export class BookingService {
       }
     } else if (status === 'in_progress') {
       if (current !== 'approved') throw new Error('Only approved bookings can move to in_progress');
-    } else if (status === 'completed') {
-      if (current !== 'approved' && current !== 'in_progress') {
-        throw new Error('Only approved or in_progress bookings can be completed');
-      }
     } else if (status === 'cancelled') {
       if (current === 'pending') throw new Error('Reject pending bookings instead of cancelling');
       if (current !== 'approved' && current !== 'in_progress') {

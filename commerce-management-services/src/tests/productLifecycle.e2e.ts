@@ -21,18 +21,35 @@ async function main() {
   const service = new ProductLifecycleService();
   try {
     console.log("stage:save:start");
-    await repo.save(repo.create({ id, customerId, vendorId, orderRef: `PROD-${id.slice(0, 8)}`, status: 'shipped', totalAmount: '499.00', metadata: {
+    await repo.save(repo.create({ id, customerId, vendorId, orderRef: `PROD-${id.slice(0, 8)}`, status: 'out_for_delivery', totalAmount: '499.00', metadata: {
       shipping_type: 'courier', courier_name: 'Test Courier', tracking_number: `AWB-${id.slice(0, 8)}`, shippedAt: new Date().toISOString(),
-      productStatusHistory: [{ status: 'shipped', at: new Date().toISOString(), actor: 'vendor' }],
+      productStatusHistory: [
+        { status: 'shipped', at: new Date().toISOString(), actor: 'vendor' },
+        { status: 'out_for_delivery', at: new Date().toISOString(), actor: 'vendor' },
+      ],
     } }));
     console.log("stage:save:done");
     const tracking = await service.tracking(customerId, id);
     if (tracking.trackingNumber !== `AWB-${id.slice(0, 8)}`) throw new Error('Tracking data was not preserved');
+    if (!tracking.deliveryOtpAvailable) throw new Error('Delivery OTP should be available for out_for_delivery');
     console.log("stage:tracking:done");
-    const confirmed = await service.confirmDelivery(customerId, id);
-    const duplicateConfirmation: any = await service.confirmDelivery(customerId, id);
-    if (confirmed.status !== 'delivered' || duplicateConfirmation.duplicate !== true) throw new Error('Delivery confirmation is not idempotent');
-    console.log("stage:confirm:done", confirmed.status, duplicateConfirmation.status, (await repo.findOneByOrFail({ id })).status);
+
+    process.env.SERVICE_COMPLETION_OTP_SECRET = process.env.SERVICE_COMPLETION_OTP_SECRET || 'p4u-service-completion-otp-dev';
+    const otpPayload = await service.getDeliveryOtp(customerId, id);
+    if (!otpPayload.otp || otpPayload.otp.length !== 6) throw new Error('Delivery OTP was not generated');
+    console.log("stage:otp:done", otpPayload.otp);
+
+    // Simulate vendor OTP completion for return-window tests.
+    const afterOtp = await repo.findOneByOrFail({ id });
+    const otpMeta: any = { ...(afterOtp.metadata || {}) };
+    otpMeta.deliveredAt = new Date().toISOString();
+    otpMeta.customerConfirmedAt = new Date().toISOString();
+    otpMeta.deliveryProof = { status: 'otp_verified', otpVerifiedAt: otpMeta.deliveredAt };
+    afterOtp.metadata = otpMeta;
+    afterOtp.status = 'completed';
+    await repo.save(afterOtp);
+    console.log("stage:completed:done");
+
     const returnA: any = await service.requestReturn(customerId, id, { reason: 'Item arrived damaged' });
     const returnB: any = await service.requestReturn(customerId, id, { reason: 'Item arrived damaged' });
     if (returnA.id !== returnB.id) throw new Error('Concurrent return request created duplicates');
@@ -47,10 +64,13 @@ async function main() {
     const refund = await service.applyRefundResult(id, `rfnd_${id.slice(0, 10)}`, 'processed');
     const refundReplay: any = await service.applyRefundResult(id, `rfnd_${id.slice(0, 10)}`, 'processed');
     if (refund.refundStatus !== 'completed' || refundReplay.duplicate !== true) throw new Error('Refund replay is not idempotent');
-    console.log(JSON.stringify({ result: 'PASS', orderId: id, tracking: true, duplicateConfirmation: true, idempotentReturn: true, refundReplay: true }));
+    console.log(JSON.stringify({ result: 'PASS', orderId: id, tracking: true, deliveryOtp: true, idempotentReturn: true, refundReplay: true }));
   } finally {
-    try { await repo.delete({ id }); } finally { await AppDataSource.destroy(); }
+    await AppDataSource.destroy();
   }
 }
 
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

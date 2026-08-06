@@ -156,6 +156,27 @@ export function createCatalogRoutes(): Router {
     }
   });
 
+  /** Shop tab: vendors with products under a product category / subcategory. */
+  router.get('/browse/categories/:categoryId/vendors', async (req: Request, res: Response) => {
+    try {
+      const paging = parsePaging(req);
+      const subcategoryId =
+        typeof req.query.subcategoryId === 'string' ? req.query.subcategoryId.trim() : undefined;
+      const data = await svc.listVendorsForProductCategory(
+        includeInactive(req),
+        paging,
+        {
+          categoryId: String(req.params.categoryId || '').trim(),
+          subcategoryId,
+        },
+        parseLocation(req),
+      );
+      sendSuccess(res, data.items ?? data, 200, { total: data.total, ...paging });
+    } catch (e: any) {
+      sendServerError(res, e.message);
+    }
+  });
+
   router.get('/services/:id', async (req: Request, res: Response) => {
     try {
       const item = await svc.getService(req.params.id, includeInactive(req));
@@ -171,7 +192,8 @@ export function createCatalogRoutes(): Router {
       const q = String(req.query.q ?? '').trim();
       if (!q) return sendBadRequest(res, 'q is required');
       const paging = parsePaging(req);
-      const items = await svc.searchAll(q, includeInactive(req), paging, parseLocation(req));
+      const type = typeof req.query.type === 'string' ? req.query.type.trim() : undefined;
+      const items = await svc.searchAll(q, includeInactive(req), paging, parseLocation(req), type);
       sendSuccess(res, items);
     } catch (e: any) {
       sendServerError(res, e.message);

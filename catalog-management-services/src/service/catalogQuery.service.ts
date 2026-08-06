@@ -315,6 +315,73 @@ export class CatalogQueryService {
     return { items: enriched, total };
   }
 
+  /**
+   * Distinct product vendors that have at least one public product under the
+   * given product category (root + children) or exact subcategory.
+   */
+  async listVendorsForProductCategory(
+    includeInactive: boolean,
+    paging: Paging,
+    filters: CategoryBrowseFilter,
+    location?: CustomerLocation,
+  ) {
+    const subcategoryId = filters.subcategoryId?.trim();
+    const categoryId = filters.categoryId?.trim();
+    if (!subcategoryId && !categoryId) {
+      return { items: [] as ReturnType<typeof normVendor>[], total: 0 };
+    }
+
+    let categoryIds: string[];
+    if (subcategoryId) {
+      categoryIds = [subcategoryId];
+    } else {
+      categoryIds = await this.collectProductBrowseIds(categoryId!);
+    }
+    if (!categoryIds.length) categoryIds = ['__none__'];
+
+    const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
+    const productQb = AppDataSource.getRepository(Product)
+      .createQueryBuilder('p')
+      .select('DISTINCT p.vendorId', 'vendorId')
+      .where('p.categoryId IN (:...cids)', { cids: categoryIds })
+      .andWhere('p.vendorId IS NOT NULL');
+    this.applyPublicProductFilters(productQb, includeInactive, allowedVendorIds);
+
+    const rawRows = await productQb.getRawMany<{ vendorId?: string; p_vendorId?: string }>();
+    const vendorIds = [
+      ...new Set(
+        rawRows
+          .map((row) => String(row.vendorId ?? row.p_vendorId ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    // Stable alphabetical order by loading vendors then sorting names would be nicer;
+    // for paging we sort ids first so offset/limit stay deterministic.
+    vendorIds.sort();
+    const total = vendorIds.length;
+    if (!total) return { items: [] as ReturnType<typeof normVendor>[], total: 0 };
+
+    const pageIds = vendorIds.slice(paging.offset, paging.offset + paging.limit);
+    if (!pageIds.length) return { items: [] as ReturnType<typeof normVendor>[], total };
+
+    const vendors = await AppDataSource.getRepository(Vendor).find({
+      where: { id: In(pageIds) },
+    });
+    const byId = new Map(vendors.map((v) => [v.id, v]));
+    const items = pageIds
+      .map((id) => byId.get(id))
+      .filter((v): v is Vendor => Boolean(v))
+      .map((v) => normVendor(v))
+      .sort((a, b) =>
+        String((a as Vendor).businessName || '').localeCompare(
+          String((b as Vendor).businessName || ''),
+          undefined,
+          { sensitivity: 'base' },
+        ),
+      );
+    return { items, total };
+  }
+
   async listServices(includeInactive: boolean, paging: Paging, filters?: CategoryBrowseFilter) {
     const repo = AppDataSource.getRepository(CatalogServiceItem);
     const qb = repo
@@ -438,73 +505,107 @@ export class CatalogQueryService {
     return repo.findOne({ where });
   }
 
-  async searchAll(q: string, includeInactive: boolean, paging: Paging, location?: CustomerLocation) {
+  async searchAll(
+    q: string,
+    includeInactive: boolean,
+    paging: Paging,
+    location?: CustomerLocation,
+    type?: string,
+  ) {
     const like = `%${q}%`;
     const items: Array<Record<string, unknown>> = [];
     const allowedVendorIds = includeInactive ? null : await visibleVendorIds(location);
+    const wanted = String(type || '').trim().toLowerCase();
+    const matchType = (candidate: string) => !wanted || wanted === candidate;
+    // When filtering by a single type, honor offset/limit on that query.
+    // Mixed search still returns a fair sample of each type (no late-slice that drops products).
+    const typedLimit = wanted ? paging.limit : Math.max(paging.limit, 8);
+    const typedOffset = wanted ? paging.offset : 0;
 
-    const pcQb = AppDataSource.getRepository(ProductCategory)
-      .createQueryBuilder('c')
-      .where('c.name LIKE :like', { like })
-      .orderBy('c.sortOrder', 'ASC')
-      .addOrderBy('c.name', 'ASC')
-      .limit(paging.limit);
-    if (!includeInactive) pcQb.andWhere('c.isActive = :a', { a: true });
-    const pcats = await pcQb.getMany();
-    items.push(...pcats.map((c) => ({ type: 'category', categoryKind: 'product', ...c })));
+    if (matchType('category')) {
+      const pcQb = AppDataSource.getRepository(ProductCategory)
+        .createQueryBuilder('c')
+        .where('c.name LIKE :like', { like })
+        .orderBy('c.sortOrder', 'ASC')
+        .addOrderBy('c.name', 'ASC')
+        .skip(typedOffset)
+        .take(typedLimit);
+      if (!includeInactive) pcQb.andWhere('c.isActive = :a', { a: true });
+      const pcats = await pcQb.getMany();
+      items.push(...pcats.map((c) => ({ type: 'category', categoryKind: 'product', ...c })));
 
-    const scQb = AppDataSource.getRepository(ServiceCategory)
-      .createQueryBuilder('c')
-      .where('c.name LIKE :like', { like })
-      .orderBy('c.sortOrder', 'ASC')
-      .addOrderBy('c.name', 'ASC')
-      .limit(paging.limit);
-    if (!includeInactive) scQb.andWhere('c.isActive = :a', { a: true });
-    const scats = await scQb.getMany();
-    items.push(...scats.map((c) => ({ type: 'category', categoryKind: 'service', ...c })));
-
-    const ssQb = AppDataSource.getRepository(ServiceSubcategory)
-      .createQueryBuilder('s')
-      .where('s.name LIKE :like', { like })
-      .orderBy('s.sortOrder', 'ASC')
-      .addOrderBy('s.name', 'ASC')
-      .limit(paging.limit);
-    if (!includeInactive) ssQb.andWhere('s.isActive = :a', { a: true });
-    const ssubs = await ssQb.getMany();
-    items.push(...ssubs.map((s) => ({ type: 'subcategory', categoryKind: 'service', ...s })));
-
-    const vendorsQb = AppDataSource.getRepository(Vendor)
-      .createQueryBuilder('v')
-      .where('v.businessName LIKE :like OR v.ownerName LIKE :like', { like })
-      .orderBy('v.updatedAt', 'DESC')
-      .limit(paging.limit);
-    if (!includeInactive) vendorsQb.andWhere('v.status = :status', { status: 'active' });
-    if (allowedVendorIds) {
-      if (allowedVendorIds.length) vendorsQb.andWhere('v.id IN (:...visibleVendorIds)', { visibleVendorIds: allowedVendorIds });
-      else vendorsQb.andWhere('1 = 0');
+      if (!wanted) {
+        const scQb = AppDataSource.getRepository(ServiceCategory)
+          .createQueryBuilder('c')
+          .where('c.name LIKE :like', { like })
+          .orderBy('c.sortOrder', 'ASC')
+          .addOrderBy('c.name', 'ASC')
+          .take(typedLimit);
+        if (!includeInactive) scQb.andWhere('c.isActive = :a', { a: true });
+        const scats = await scQb.getMany();
+        items.push(...scats.map((c) => ({ type: 'category', categoryKind: 'service', ...c })));
+      }
     }
-    const vendors = await vendorsQb.getMany();
-    items.push(...vendors.map((v) => ({ type: 'vendor', ...v })));
 
-    const productsQb = AppDataSource.getRepository(Product)
-      .createQueryBuilder('p')
-      .where('p.name LIKE :like OR p.description LIKE :like', { like })
-      .orderBy('p.updatedAt', 'DESC')
-      .limit(paging.limit);
-    this.applyPublicProductFilters(productsQb, includeInactive, allowedVendorIds);
-    const products = await productsQb.getMany();
-    items.push(...products.map((p) => ({ type: 'product', ...p })));
+    if (matchType('subcategory')) {
+      const ssQb = AppDataSource.getRepository(ServiceSubcategory)
+        .createQueryBuilder('s')
+        .where('s.name LIKE :like', { like })
+        .orderBy('s.sortOrder', 'ASC')
+        .addOrderBy('s.name', 'ASC')
+        .skip(typedOffset)
+        .take(typedLimit);
+      if (!includeInactive) ssQb.andWhere('s.isActive = :a', { a: true });
+      const ssubs = await ssQb.getMany();
+      items.push(...ssubs.map((s) => ({ type: 'subcategory', categoryKind: 'service', ...s })));
+    }
 
-    const servicesQb = AppDataSource.getRepository(CatalogServiceItem)
-      .createQueryBuilder('s')
-      .where('s.name LIKE :like OR s.description LIKE :like', { like })
-      .orderBy('s.sortOrder', 'ASC')
-      .addOrderBy('s.name', 'ASC')
-      .limit(paging.limit);
-    if (!includeInactive) servicesQb.andWhere('s.isActive = :a', { a: true });
-    const services = await servicesQb.getMany();
-    items.push(...services.map((s) => ({ type: 'service', ...s })));
+    if (matchType('vendor')) {
+      const vendorsQb = AppDataSource.getRepository(Vendor)
+        .createQueryBuilder('v')
+        .where('v.businessName LIKE :like OR v.ownerName LIKE :like', { like })
+        .orderBy('v.updatedAt', 'DESC')
+        .skip(typedOffset)
+        .take(typedLimit);
+      if (!includeInactive) vendorsQb.andWhere('v.status = :status', { status: 'active' });
+      if (allowedVendorIds) {
+        if (allowedVendorIds.length) {
+          vendorsQb.andWhere('v.id IN (:...visibleVendorIds)', { visibleVendorIds: allowedVendorIds });
+        } else {
+          vendorsQb.andWhere('1 = 0');
+        }
+      }
+      const vendors = await vendorsQb.getMany();
+      items.push(...vendors.map((v) => ({ type: 'vendor', ...v })));
+    }
 
-    return items.slice(paging.offset, paging.offset + paging.limit);
+    if (matchType('product')) {
+      const productsQb = AppDataSource.getRepository(Product)
+        .createQueryBuilder('p')
+        .where('p.name LIKE :like OR p.description LIKE :like', { like })
+        .orderBy('p.updatedAt', 'DESC')
+        .skip(typedOffset)
+        .take(typedLimit);
+      this.applyPublicProductFilters(productsQb, includeInactive, allowedVendorIds);
+      const products = await productsQb.getMany();
+      items.push(...products.map((p) => ({ type: 'product', ...normProduct(p) })));
+    }
+
+    if (matchType('service')) {
+      const servicesQb = AppDataSource.getRepository(CatalogServiceItem)
+        .createQueryBuilder('s')
+        .where('s.name LIKE :like OR s.description LIKE :like', { like })
+        .orderBy('s.sortOrder', 'ASC')
+        .addOrderBy('s.name', 'ASC')
+        .skip(typedOffset)
+        .take(typedLimit);
+      if (!includeInactive) servicesQb.andWhere('s.isActive = :a', { a: true });
+      const services = await servicesQb.getMany();
+      items.push(...services.map((s) => ({ type: 'service', ...s })));
+    }
+
+    if (wanted) return items;
+    // Mixed results: keep a balanced sample so products are not truncated away.
+    return items.slice(0, Math.max(paging.limit * 3, paging.limit));
   }
 }

@@ -289,6 +289,22 @@ export function createVendorRoutes(): Router {
   router.patch('/orders/individual/:orderId', ...orderWrite, patchOrderHandler);
   router.patch('/orders/:orderId', ...orderWrite, patchOrderHandler);
 
+  router.post('/orders/:orderId/delivery-otp', ...orderWrite, async (req: Request, res: Response) => {
+    const vendorId = await requireVendorId(req, res, svc);
+    if (!vendorId) return;
+    try {
+      const row = await svc.verifyDeliveryOtp(
+        req.params.orderId,
+        vendorId,
+        String(req.body?.otp || ''),
+      );
+      sendSuccess(res, row);
+    } catch (e: any) {
+      if (e.message === 'Order not found') return sendNotFound(res, e.message);
+      sendBadRequest(res, e.message);
+    }
+  });
+
   router.patch('/orders/:orderId/return', ...orderWrite, async (req: Request, res: Response) => {
     const vendorId = await requireVendorId(req, res, svc);
     if (!vendorId) return;

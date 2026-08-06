@@ -16,6 +16,17 @@ function history(meta: JsonRecord): JsonRecord[] {
   return Array.isArray(meta.productStatusHistory) ? meta.productStatusHistory.map((row: any) => ({ ...row })) : [];
 }
 
+function deliveryOtp(orderId: string, nonce: string): string {
+  const secret =
+    process.env.PRODUCT_DELIVERY_OTP_SECRET ||
+    process.env.SERVICE_COMPLETION_OTP_SECRET;
+  if (!secret) throw new Error('Product delivery OTP secret is not configured');
+  const hex = createHmac('sha256', secret).update(`${orderId}:${nonce}`).digest('hex').slice(0, 12);
+  return String(parseInt(hex, 16) % 1000000).padStart(6, '0');
+}
+
+const DELIVERY_OTP_STATUSES = new Set(['out_for_delivery']);
+
 export class ProductLifecycleService {
   private commerce = new CommerceQueryService();
 
@@ -47,15 +58,64 @@ export class ProductLifecycleService {
       customerConfirmedAt: meta.customerConfirmedAt ?? null,
       history: history(meta),
       returnRequest: meta.returnRequest ?? null,
+      deliveryOtpAvailable: DELIVERY_OTP_STATUSES.has(String(order.status || '').toLowerCase()),
     };
   }
 
-  async confirmDelivery(customerId: string, orderId: string) {
+  /** Customer shows this OTP to the delivery person / vendor to complete delivery. */
+  async getDeliveryOtp(customerId: string, orderId: string) {
     return AppDataSource.transaction(async manager => {
       const order = await this.ownedOrder(customerId, orderId, true, manager);
-      if (['cancelled', 'refunded', 'returned'].includes(order.status)) throw new Error(`Delivery cannot be confirmed from ${order.status}`);
+      const status = String(order.status || '').toLowerCase();
+      if (!DELIVERY_OTP_STATUSES.has(status)) {
+        throw new Error('Delivery OTP is only available when the order is out for delivery');
+      }
       const meta = metaOf(order);
-      if (meta.customerConfirmedAt) return { ...order, duplicate: true };
+      let proof = { ...(meta.deliveryProof || {}) } as JsonRecord;
+      const expired =
+        !proof.otpNonce ||
+        !proof.otpExpiresAt ||
+        Date.now() > new Date(String(proof.otpExpiresAt)).getTime();
+      if (expired) {
+        const now = new Date();
+        proof = {
+          status: 'awaiting_vendor_otp',
+          otpNonce: randomUUID(),
+          otpExpiresAt: new Date(now.getTime() + 15 * 60000).toISOString(),
+          attempts: 0,
+          createdAt: now.toISOString(),
+        };
+        order.metadata = { ...meta, deliveryProof: proof };
+        await manager.getRepository(Order).save(order);
+      }
+      return {
+        orderId: order.id,
+        otp: deliveryOtp(order.id, String(proof.otpNonce)),
+        expiresAt: proof.otpExpiresAt,
+      };
+    });
+  }
+
+  async confirmDelivery(customerId: string, orderId: string) {
+    // Legacy button path: still allowed, but OTP-gated completion is preferred.
+    // Keep confirming as "delivered" only when already past OTP completion is not required for returns window.
+    return AppDataSource.transaction(async manager => {
+      const order = await this.ownedOrder(customerId, orderId, true, manager);
+      if (['cancelled', 'refunded', 'returned', 'completed'].includes(order.status)) {
+        throw new Error(`Delivery cannot be confirmed from ${order.status}`);
+      }
+      const meta = metaOf(order);
+      if (meta.customerConfirmedAt && ['delivered', 'completed'].includes(order.status)) {
+        return { ...order, duplicate: true };
+      }
+      const status = String(order.status || '').toLowerCase();
+      if (!DELIVERY_OTP_STATUSES.has(status) && status !== 'delivered') {
+        throw new Error('Order must be shipped or out for delivery before confirmation');
+      }
+      // Prefer OTP flow: tell clients to use delivery OTP when still in transit.
+      if (DELIVERY_OTP_STATUSES.has(status)) {
+        throw new Error('Share the delivery OTP with the seller to complete this order');
+      }
       const now = new Date().toISOString();
       const nextHistory = history(meta);
       nextHistory.push({ status: 'delivered', at: now, actor: 'customer', note: 'Delivery confirmed by customer' });

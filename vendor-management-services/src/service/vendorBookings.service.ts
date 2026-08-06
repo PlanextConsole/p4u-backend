@@ -53,7 +53,7 @@ export class VendorBookingsService {
   async updateStatusForVendor(vendorId: string, bookingId: string, nextStatus: string): Promise<Booking> {
     await this.assertServiceVendor(vendorId);
     const status = String(nextStatus || '').trim().toLowerCase();
-    const allowed = new Set(['approved', 'rejected', 'in_progress', 'completed', 'cancelled']);
+    const allowed = new Set(['approved', 'rejected', 'in_progress', 'cancelled']);
     if (!allowed.has(status)) throw new Error(`Invalid status: ${status}`);
 
     const row = await this.repo.findOne({ where: { id: bookingId, vendorId } });
@@ -70,10 +70,6 @@ export class VendorBookingsService {
       }
     } else if (status === 'in_progress') {
       if (current !== 'approved') throw new Error('Only approved bookings can move to in_progress');
-    } else if (status === 'completed') {
-      if (current !== 'approved' && current !== 'in_progress') {
-        throw new Error('Only approved or in_progress bookings can be completed');
-      }
     } else if (status === 'cancelled') {
       if (current === 'pending') throw new Error('Reject pending bookings instead of cancelling');
       if (current !== 'approved' && current !== 'in_progress') {

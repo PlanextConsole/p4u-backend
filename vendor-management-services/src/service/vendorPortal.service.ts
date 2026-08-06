@@ -24,6 +24,15 @@ function metaRecord(m: unknown): Record<string, unknown> {
   return m as Record<string, unknown>;
 }
 
+function deliveryOtp(orderId: string, nonce: string): string {
+  const secret =
+    process.env.PRODUCT_DELIVERY_OTP_SECRET ||
+    process.env.SERVICE_COMPLETION_OTP_SECRET;
+  if (!secret) throw new Error('Product delivery OTP secret is not configured');
+  const hex = crypto.createHmac('sha256', secret).update(`${orderId}:${nonce}`).digest('hex').slice(0, 12);
+  return String(parseInt(hex, 16) % 1000000).padStart(6, '0');
+}
+
 function normalizeSettlementRow(row: Settlement, order?: Order): Settlement {
   const meta = metaRecord(row.metadata);
   const orderMeta = metaRecord(order?.metadata);
@@ -34,6 +43,7 @@ function normalizeSettlementRow(row: Settlement, order?: Order): Settlement {
     `STL-${String(row.id).slice(0, 8).toUpperCase()}`;
   const orderRef =
     (order?.orderRef && String(order.orderRef).trim()) ||
+    (typeof meta.bookingRef === 'string' && meta.bookingRef.trim()) ||
     (typeof meta.orderRef === 'string' && meta.orderRef.trim()) ||
     (typeof meta.order_ref === 'string' && meta.order_ref.trim()) ||
     (row.orderId ? `ORD-${String(row.orderId).slice(0, 8).toUpperCase()}` : '');
@@ -50,7 +60,8 @@ function normalizeSettlementRow(row: Settlement, order?: Order): Settlement {
     ...meta,
     displayRef,
     settlementCode: displayRef,
-    orderRef: orderRef || meta.orderRef,
+    orderRef: orderRef || meta.orderRef || meta.bookingRef,
+    bookingRef: meta.bookingRef || orderRef,
     orderStatus: order?.status ?? meta.orderStatus,
     gross: gross ?? meta.gross,
     commission: commission ?? meta.commission,
@@ -146,10 +157,13 @@ export class VendorPortalService {
         accepted: new Set(['in_progress', 'processing', 'cancelled']),
         in_progress: new Set(['shipped', 'cancelled']),
         processing: new Set(['shipped', 'cancelled']),
-        shipped: new Set(['out_for_delivery', 'delivered']),
-        out_for_delivery: new Set(['delivered']),
-        delivered: new Set(['completed']),
+        shipped: new Set(['out_for_delivery']),
+        out_for_delivery: new Set([]),
+        delivered: new Set([]),
       };
+      if (nextStatus === 'delivered' || nextStatus === 'completed') {
+        throw new Error('Use customer delivery OTP to mark this order delivered/completed');
+      }
       if (nextStatus !== prevStatus && !transitions[prevStatus]?.has(nextStatus)) {
         throw new Error(`Order cannot move from ${prevStatus} to ${nextStatus}`);
       }
@@ -170,7 +184,6 @@ export class VendorPortalService {
         nextMeta.shipping_type = shippingType;
         nextMeta.shippedAt = nextMeta.shippedAt ?? new Date().toISOString();
       }
-      if (nextStatus === 'delivered' && prevStatus !== 'delivered') nextMeta.deliveredAt = nextMeta.deliveredAt ?? new Date().toISOString();
       if (nextStatus !== prevStatus) {
         const statusHistory = Array.isArray(nextMeta.productStatusHistory) ? [...nextMeta.productStatusHistory] : [];
         statusHistory.push({ status: nextStatus, at: new Date().toISOString(), actor: 'vendor' });
@@ -188,6 +201,64 @@ export class VendorPortalService {
     void this.notifier.notifyVendorById(vendorId, {
       type: 'order', title: `Order ${displayId} updated`, body: `Status is now ${saved.status}.`, deepLink: '/dashboard/product/orders',
     }).catch(() => undefined);
+    return enrichOrderForVendorPortal(saved);
+  }
+
+  /** Vendor enters the customer's delivery OTP → order becomes completed. */
+  async verifyDeliveryOtp(orderId: string, vendorId: string, otp: string): Promise<Order> {
+    const saved = await AppDataSource.transaction(async manager => {
+      const repo = manager.getRepository(Order);
+      const row = await repo.findOne({ where: { id: orderId }, lock: { mode: 'pessimistic_write' } });
+      if (!row || row.vendorId !== vendorId) throw new Error('Order not found');
+      const prevStatus = String(row.status || '').toLowerCase();
+      if (prevStatus === 'completed') {
+        const proof = metaRecord(metaRecord(row.metadata).deliveryProof);
+        if (proof.otpVerifiedAt) return row;
+      }
+      if (!['out_for_delivery'].includes(prevStatus)) {
+        throw new Error('Delivery OTP can only be used when the order is out for delivery');
+      }
+      const meta = metaRecord(row.metadata);
+      let proof = { ...metaRecord(meta.deliveryProof) } as Record<string, any>;
+      const expired =
+        !proof.otpNonce ||
+        !proof.otpExpiresAt ||
+        Date.now() > new Date(String(proof.otpExpiresAt)).getTime();
+      if (expired) {
+        throw new Error('Ask the customer to open Show delivery OTP first, then try again');
+      }
+      const attempts = Number(proof.attempts || 0);
+      if (attempts >= 5) throw new Error('Too many invalid OTP attempts');
+      const expected = Buffer.from(deliveryOtp(row.id, String(proof.otpNonce)));
+      const supplied = Buffer.from(String(otp || '').trim());
+      if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) {
+        proof.attempts = attempts + 1;
+        row.metadata = { ...meta, deliveryProof: proof };
+        await repo.save(row);
+        throw new Error('Invalid delivery OTP');
+      }
+      const now = new Date().toISOString();
+      proof = {
+        ...proof,
+        status: 'otp_verified',
+        otpVerifiedAt: now,
+        attempts,
+      };
+      delete proof.otpNonce;
+      const statusHistory = Array.isArray(meta.productStatusHistory)
+        ? [...(meta.productStatusHistory as unknown[])]
+        : [];
+      statusHistory.push({ status: 'completed', at: now, actor: 'vendor', note: 'Delivery OTP verified' });
+      row.status = 'completed';
+      row.metadata = {
+        ...meta,
+        deliveredAt: meta.deliveredAt ?? now,
+        customerConfirmedAt: meta.customerConfirmedAt ?? now,
+        deliveryProof: proof,
+        productStatusHistory: statusHistory,
+      };
+      return repo.save(row);
+    });
     return enrichOrderForVendorPortal(saved);
   }
 
@@ -416,8 +487,8 @@ export class VendorPortalService {
   ) {
     const qb = AppDataSource.getRepository(Settlement)
       .createQueryBuilder('s')
-      .innerJoin(Order, 'o', 'o.id = s.orderId')
-      .where('o.vendorId = :vendorId', { vendorId })
+      .leftJoin(Order, 'o', 'o.id = s.orderId')
+      .where('s.vendorId = :vendorId', { vendorId })
       .andWhere('s.settlementType = :settlementType', { settlementType: 'cash' });
 
     const status = (filters?.status || '').trim();
@@ -433,7 +504,7 @@ export class VendorPortalService {
     if (q) {
       const like = `%${q}%`;
       qb.andWhere(
-        `(s.id LIKE :like OR s.orderId LIKE :like OR o.orderRef LIKE :like OR ${jsonText('s.metadata', 'orderRef')} LIKE :like OR ${jsonText('s.metadata', 'settlementCode')} LIKE :like)`,
+        `(s.id LIKE :like OR s.orderId LIKE :like OR o.orderRef LIKE :like OR ${jsonText('s.metadata', 'orderRef')} LIKE :like OR ${jsonText('s.metadata', 'bookingRef')} LIKE :like OR ${jsonText('s.metadata', 'settlementCode')} LIKE :like)`,
         { like },
       );
     }
@@ -457,7 +528,8 @@ export class VendorPortalService {
 
   async getSettlementForVendor(vendorId: string, settlementId: string): Promise<Settlement | null> {
     const row = await AppDataSource.getRepository(Settlement).findOne({ where: { id: settlementId } });
-    if (!row || row.settlementType !== 'cash' || !row.orderId) return null;
+    if (!row || row.settlementType !== 'cash' || row.vendorId !== vendorId) return null;
+    if (!row.orderId) return normalizeSettlementRow(row);
     const order = await AppDataSource.getRepository(Order).findOne({
       where: { id: row.orderId, vendorId },
     });

@@ -404,6 +404,11 @@ export function createCommerceRoutes(): Router {
     try { sendSuccess(res, await productLifecycle.tracking(customerId, req.params.orderId)); } catch (e: any) { sendBadRequest(res, e.message); }
   });
 
+  router.get('/orders/:orderId/delivery-otp', requireShopperRole, requirePermission('order.read.self'), async (req: Request, res: Response) => {
+    const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res);
+    try { sendSuccess(res, await productLifecycle.getDeliveryOtp(customerId, req.params.orderId)); } catch (e: any) { sendBadRequest(res, e.message); }
+  });
+
   router.post('/orders/:orderId/confirm-delivery', requireShopperRole, requirePermission('order.write.self'), async (req: Request, res: Response) => {
     const customerId = customerIdFromAuth(req); if (!customerId) return sendUnauthorized(res);
     try { sendSuccess(res, await productLifecycle.confirmDelivery(customerId, req.params.orderId)); } catch (e: any) { sendBadRequest(res, e.message); }
