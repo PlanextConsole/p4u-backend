@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { In } from 'typeorm';
+import { Brackets } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Order } from '../entities/Order';
 import { CustomerReferralRewardService } from './customerReferralReward.service';
@@ -16,12 +16,24 @@ export class CommerceQueryService {
   async listCustomerOrders(customerId: string, limit: number, offset: number) {
     const ids = await this.customerIdAliases(customerId);
     if (!ids.length) return [[], 0] as [Order[], number];
-    return AppDataSource.getRepository(Order).findAndCount({
-      where: { customerId: In(ids) },
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: offset,
-    });
+    // Historical checkout versions could persist either the Keycloak subject or
+    // the profile UUID in customer_id. The immutable checkout snapshot is a
+    // second ownership signal, so include it instead of silently hiding a paid
+    // order when one of those identifiers was written by an older process.
+    const qb = AppDataSource.getRepository(Order)
+      .createQueryBuilder('o')
+      .where(
+        new Brackets((where) => {
+          where
+            .where('o.customer_id IN (:...ids)', { ids })
+            .orWhere("o.metadata ->> 'customerProfileId' IN (:...ids)", { ids })
+            .orWhere("o.metadata ->> 'customerKeycloakUserId' IN (:...ids)", { ids });
+        }),
+      )
+      .orderBy('o.created_at', 'DESC')
+      .take(limit)
+      .skip(offset);
+    return qb.getManyAndCount();
   }
 
   async getOrderById(id: string) {

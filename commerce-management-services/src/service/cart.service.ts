@@ -728,6 +728,7 @@ export class CartService {
             customerPhone: profile.phone ?? undefined,
             customerEmail: profile.email ?? undefined,
             customerProfileId: profile.id,
+            customerKeycloakUserId: profile.keycloakUserId ?? undefined,
           }
         : {};
 
@@ -757,7 +758,10 @@ export class CartService {
       }
       const stamp = Date.now();
       let vendorIndex = 0;
-      const orderCustomerId = (await canonicalCustomerId(customerId)) || customerId;
+      // Use the profile already resolved for the checkout snapshot. This avoids
+      // a second connection resolving a different alias while a transaction is
+      // in progress and guarantees My Orders uses the same canonical identity.
+      const orderCustomerId = profile?.id || (await canonicalCustomerId(customerId)) || customerId;
 
       for (const [vendorKey, vendorLines] of linesByVendor) {
         const resolvedVendor = vendorKey === '_none' ? normalizeVendorId(vendorId) : vendorKey;
