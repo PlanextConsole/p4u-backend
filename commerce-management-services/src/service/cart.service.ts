@@ -624,7 +624,11 @@ export class CartService {
     const keycloakSub = String(opts.keycloakSub || '').trim();
     if (idempotencyKey) {
       const existing = await this.existingCheckout(customerId, idempotencyKey);
-      if (existing) return existing;
+      if (existing) {
+        // Replay must still empty the cart so "Order Confirmed" never leaves items behind.
+        await this.clearCart(customerId).catch(() => undefined);
+        return existing;
+      }
     }
     const data = await this.getCartResponse(customerId);
     if (!data.items.length) {
@@ -765,6 +769,7 @@ export class CartService {
         const duplicate = await this.existingCheckout(customerId, idempotencyKey, queryRunner.manager);
         if (duplicate) {
           await queryRunner.commitTransaction();
+          await this.clearCart(customerId).catch(() => undefined);
           return duplicate;
         }
       }
