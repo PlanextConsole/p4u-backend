@@ -1,5 +1,6 @@
 import { AppDataSource, isPostgresDbType } from '../config/database';
 import { Product } from '../entities/Product';
+import { ProductRequest } from '../entities/ProductRequest';
 import { ProductVariation } from '../entities/ProductVariation';
 import { countUnitsSoldByProduct } from './vendorOrderEnrichment';
 import { ProductVariationsService, type VariationUpsertInput } from './productVariations.service';
@@ -191,14 +192,63 @@ export class VendorCatalogService {
     if (row.vendorId !== vendorId) throw new Error('Product does not belong to vendor');
 
     const pending = row.moderationStatus === 'pending';
+    const requestedPrices = {
+      sellPrice: toPriceString(body.sellPrice, row.sellPrice),
+      discountAmount: toPriceString(body.discountAmount, row.discountAmount),
+      finalPrice: toPriceString(body.finalPrice, row.finalPrice),
+      price: toPriceString(body.price, row.price),
+    };
+    const priceChanged = !pending && (
+      requestedPrices.sellPrice !== Number(row.sellPrice).toFixed(2) ||
+      requestedPrices.discountAmount !== Number(row.discountAmount).toFixed(2) ||
+      requestedPrices.finalPrice !== Number(row.finalPrice).toFixed(2) ||
+      requestedPrices.price !== Number(row.price).toFixed(2) ||
+      variationRows !== undefined
+    );
+
+    if (priceChanged) {
+      const requestRepo = AppDataSource.getRepository(ProductRequest);
+      const existing = (await requestRepo.find({ where: { vendorId, status: 'pending' } }))
+        .find((request) => request.payload?.type === 'price_change' && request.payload?.productId === productId);
+      const request = existing ?? requestRepo.create({
+        vendorId,
+        categoryId: row.categoryId,
+        taxConfigurationId: row.taxConfigurationId,
+        name: `${row.name} price change`,
+        status: 'pending',
+        payload: null,
+      });
+      request.categoryId = (body.categoryId as string | undefined) || row.categoryId;
+      request.payload = {
+        type: 'price_change',
+        productId,
+        previous: {
+          sellPrice: row.sellPrice,
+          discountAmount: row.discountAmount,
+          finalPrice: row.finalPrice,
+          price: row.price,
+        },
+        requested: requestedPrices,
+        requestedVariations: variationRows ?? undefined,
+      };
+      const savedRequest = await requestRepo.save(request);
+      row.metadata = {
+        ...(row.metadata || {}),
+        pendingPriceChange: {
+          requestId: savedRequest.id,
+          requested: requestedPrices,
+          requestedAt: new Date().toISOString(),
+        },
+      };
+    }
 
     if (body.name !== undefined) row.name = String(body.name || '').trim() || row.name;
     if (!pending && body.availability !== undefined) row.availability = Boolean(body.availability);
     if (body.categoryId !== undefined) row.categoryId = (body.categoryId as string) || null;
     if (body.serviceId !== undefined) row.serviceId = (body.serviceId as string) || null;
-    if (body.sellPrice !== undefined) row.sellPrice = toPriceString(body.sellPrice, row.sellPrice);
-    if (body.discountAmount !== undefined) row.discountAmount = toPriceString(body.discountAmount, row.discountAmount);
-    if (body.finalPrice !== undefined) row.finalPrice = toPriceString(body.finalPrice, row.finalPrice);
+    if (!priceChanged && body.sellPrice !== undefined) row.sellPrice = requestedPrices.sellPrice;
+    if (!priceChanged && body.discountAmount !== undefined) row.discountAmount = requestedPrices.discountAmount;
+    if (!priceChanged && body.finalPrice !== undefined) row.finalPrice = requestedPrices.finalPrice;
     if (body.taxConfigurationId !== undefined) row.taxConfigurationId = (body.taxConfigurationId as string) || null;
     if (body.durationHours !== undefined) row.durationHours = toInt(body.durationHours, row.durationHours);
     if (body.durationMinutes !== undefined) row.durationMinutes = toInt(body.durationMinutes, row.durationMinutes);
@@ -212,15 +262,19 @@ export class VendorCatalogService {
       row.commissionOverridePercent = pctOrNull(body.commissionOverridePercent);
     }
     if (body.description !== undefined) row.description = strOrNull(body.description);
-    if (body.price !== undefined) row.price = toPriceString(body.price, row.price);
+    if (!priceChanged && body.price !== undefined) row.price = requestedPrices.price;
     if (!pending && body.isActive !== undefined) {
       row.isActive = Boolean(body.isActive);
       row.availability = row.isActive;
     }
-    if (body.metadata !== undefined) row.metadata = metaObj(body.metadata);
+    if (body.metadata !== undefined) {
+      const pendingPriceChange = row.metadata?.pendingPriceChange;
+      row.metadata = metaObj(body.metadata);
+      if (pendingPriceChange) row.metadata = { ...(row.metadata || {}), pendingPriceChange };
+    }
     const saved = await repo.save(row);
     const productType = resolveProductType(body, saved);
-    if (variationRows !== undefined) {
+    if (variationRows !== undefined && !priceChanged) {
       if (productType === 'variable') await this.variations.replaceForProduct(saved.id, variationRows);
       else await this.variations.deleteForProduct(saved.id);
     }

@@ -20,6 +20,7 @@ import { DropshippingOrder } from '../entities/DropshippingOrder';
 import { PlatformSettings } from '../entities/PlatformSettings';
 import { UserNotification } from '../entities/UserNotification';
 import { Booking } from '../entities/Booking';
+import { ProductRequest } from '../entities/ProductRequest';
 
 export function isPostgresDbType(value = process.env.DB_TYPE || 'mysql'): boolean {
   const dbType = value.toLowerCase();
@@ -58,6 +59,7 @@ export const AppDataSource = new DataSource({
     PlatformSettings,
     UserNotification,
     Booking,
+    ProductRequest,
   ],
   synchronize: process.env.DB_SYNCHRONIZE === 'true',
   logging: process.env.NODE_ENV === 'development',

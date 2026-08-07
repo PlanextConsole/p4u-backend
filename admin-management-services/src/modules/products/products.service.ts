@@ -182,6 +182,34 @@ export class ProductsAdminService {
     if (dto.name !== undefined) row.name = dto.name;
     if (dto.status !== undefined) row.status = dto.status;
     if (dto.payload !== undefined) row.payload = dto.payload;
+    const nextStatus = String(dto.status ?? row.status).toLowerCase();
+    const payload = row.payload || {};
+    if (nextStatus === 'approved' && payload.type === 'price_change' && payload.productId) {
+      const product = await AppDataSource.getRepository(Product).findOne({ where: { id: String(payload.productId) } });
+      if (!product) throw new Error('Price-change product not found');
+      const requested = payload.requested && typeof payload.requested === 'object'
+        ? payload.requested as Record<string, unknown>
+        : {};
+      if (requested.sellPrice !== undefined) product.sellPrice = String(requested.sellPrice);
+      if (requested.discountAmount !== undefined) product.discountAmount = String(requested.discountAmount);
+      if (requested.finalPrice !== undefined) product.finalPrice = String(requested.finalPrice);
+      if (requested.price !== undefined) product.price = String(requested.price);
+      const metadata = product.metadata || {};
+      delete metadata.pendingPriceChange;
+      product.metadata = metadata;
+      await AppDataSource.getRepository(Product).save(product);
+      if (Array.isArray(payload.requestedVariations)) {
+        await this.variations.replaceForProduct(product.id, payload.requestedVariations as never[]);
+      }
+    } else if (nextStatus === 'rejected' && payload.type === 'price_change' && payload.productId) {
+      const product = await AppDataSource.getRepository(Product).findOne({ where: { id: String(payload.productId) } });
+      if (product) {
+        const metadata = product.metadata || {};
+        delete metadata.pendingPriceChange;
+        product.metadata = metadata;
+        await AppDataSource.getRepository(Product).save(product);
+      }
+    }
     await repo.save(row);
     await this.audit.log({ actorSub, action: 'UPDATE', entityType: 'ProductRequest', entityId: row.id, metadata: { changes: dto }, ipAddress: ip ?? null });
     return row;
