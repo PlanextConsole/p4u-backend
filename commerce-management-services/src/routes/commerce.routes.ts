@@ -23,6 +23,13 @@ function customerIdFromAuth(req: Request): string | null {
   return id || null;
 }
 
+/** Keycloak subject when present — may differ from customer_id (profile UUID) claim. */
+function keycloakSubFromAuth(req: Request): string | null {
+  const auth = (req as any).auth;
+  const sub = String(auth?.sub || '').trim();
+  return sub || null;
+}
+
 export function createCommerceRoutes(): Router {
   const router = Router();
   const svc = new CommerceQueryService();
@@ -249,6 +256,7 @@ export function createCommerceRoutes(): Router {
           paymentMode,
           deliverySchedule,
           idempotencyKey,
+          keycloakSub: keycloakSubFromAuth(req) || undefined,
         });
         sendCreated(res, order);
       } catch (e: any) {
@@ -300,7 +308,9 @@ export function createCommerceRoutes(): Router {
       const customerId = customerIdFromAuth(req);
       if (!customerId) return sendUnauthorized(res, 'customer_id or sub required on token');
       const { limit, offset } = parsePaging(req);
-      const [items, total] = await svc.listCustomerOrders(customerId, limit, offset);
+      const sub = keycloakSubFromAuth(req);
+      const extra = sub && sub !== customerId ? [sub] : [];
+      const [items, total] = await svc.listCustomerOrders(customerId, limit, offset, extra);
       sendSuccess(res, items, 200, { total, limit, offset });
     }
   );
@@ -312,7 +322,9 @@ export function createCommerceRoutes(): Router {
     requireCustomerSelfOrAdmin('customerId'),
     async (req: Request, res: Response) => {
       const { limit, offset } = parsePaging(req);
-      const [items, total] = await svc.listCustomerOrders(req.params.customerId, limit, offset);
+      const sub = keycloakSubFromAuth(req);
+      const extra = sub && sub !== req.params.customerId ? [sub] : [];
+      const [items, total] = await svc.listCustomerOrders(req.params.customerId, limit, offset, extra);
       sendSuccess(res, items, 200, { total, limit, offset });
     }
   );
@@ -327,7 +339,8 @@ export function createCommerceRoutes(): Router {
       const auth = (req as any).auth;
       const isAdmin = (auth?.realm_access?.roles || []).map((r: string) => r.toUpperCase()).includes('ADMIN');
       const tokenCustomerId = String(auth?.customer_id || auth?.sub || '');
-      if (!isAdmin && !(await svc.customerOwnsOrder(tokenCustomerId, row))) {
+      const sub = String(auth?.sub || '').trim();
+      if (!isAdmin && !(await svc.customerOwnsOrder(tokenCustomerId, row, sub && sub !== tokenCustomerId ? [sub] : []))) {
         return sendForbidden(res, 'Forbidden: customer self access required');
       }
       sendSuccess(res, row);

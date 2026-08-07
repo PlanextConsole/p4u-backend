@@ -616,9 +616,12 @@ export class CartService {
       paymentMode?: string;
       deliverySchedule?: Record<string, unknown> | null;
       idempotencyKey?: string;
+      /** Keycloak `sub` when it differs from customer_id claim (profile UUID). */
+      keycloakSub?: string;
     } = {},
   ): Promise<Order & { orders?: Order[] }> {
     const idempotencyKey = String(opts.idempotencyKey || '').trim().slice(0, 128);
+    const keycloakSub = String(opts.keycloakSub || '').trim();
     if (idempotencyKey) {
       const existing = await this.existingCheckout(customerId, idempotencyKey);
       if (existing) return existing;
@@ -717,20 +720,29 @@ export class CartService {
     }
 
     const profileRepo = AppDataSource.getRepository(CustomerProfile);
-    let profile = await profileRepo.findOne({ where: { id: customerId } });
-    if (!profile) {
-      profile = await profileRepo.findOne({ where: { keycloakUserId: customerId } });
+    let profile =
+      (await profileRepo.findOne({ where: { id: customerId } })) ||
+      (keycloakSub
+        ? await profileRepo.findOne({ where: { id: keycloakSub } })
+        : null) ||
+      (await profileRepo.findOne({ where: { keycloakUserId: customerId } })) ||
+      (keycloakSub
+        ? await profileRepo.findOne({ where: { keycloakUserId: keycloakSub } })
+        : null);
+    // Keep profile ↔ Keycloak link filled so My Orders alias resolution works.
+    const linkSub = keycloakSub || (customerId !== profile?.id ? customerId : '');
+    if (profile && linkSub && !profile.keycloakUserId && profile.id !== linkSub) {
+      profile.keycloakUserId = linkSub;
+      await profileRepo.save(profile).catch(() => undefined);
     }
-    const customerSnapshot =
-      profile != null
-        ? {
-            customerName: profile.fullName,
-            customerPhone: profile.phone ?? undefined,
-            customerEmail: profile.email ?? undefined,
-            customerProfileId: profile.id,
-            customerKeycloakUserId: profile.keycloakUserId ?? undefined,
-          }
-        : {};
+    const customerSnapshot = {
+      customerAuthId: customerId,
+      customerName: profile?.fullName,
+      customerPhone: profile?.phone ?? undefined,
+      customerEmail: profile?.email ?? undefined,
+      customerProfileId: profile?.id,
+      customerKeycloakUserId: profile?.keycloakUserId || keycloakSub || customerId,
+    };
 
     const paymentMode = String(opts.paymentMode || 'cod').trim().toLowerCase() || 'cod';
     const isCod = paymentMode === 'cod';
@@ -758,10 +770,9 @@ export class CartService {
       }
       const stamp = Date.now();
       let vendorIndex = 0;
-      // Use the profile already resolved for the checkout snapshot. This avoids
-      // a second connection resolving a different alias while a transaction is
-      // in progress and guarantees My Orders uses the same canonical identity.
-      const orderCustomerId = profile?.id || (await canonicalCustomerId(customerId)) || customerId;
+      // Persist the authenticated identity on customer_id so GET /orders/mine
+      // always matches the JWT. Profile UUID stays in metadata for enrichment.
+      const orderCustomerId = customerId;
 
       for (const [vendorKey, vendorLines] of linesByVendor) {
         const resolvedVendor = vendorKey === '_none' ? normalizeVendorId(vendorId) : vendorKey;

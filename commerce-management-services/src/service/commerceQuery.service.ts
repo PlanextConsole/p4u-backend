@@ -3,18 +3,13 @@ import { Brackets } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Order } from '../entities/Order';
 import { CustomerReferralRewardService } from './customerReferralReward.service';
-import { resolveCustomerIdAliases } from '../utils/customerIdentity';
+import { orderMetadataIdentitySql, resolveCustomerIdAliases } from '../utils/customerIdentity';
 
 export class CommerceQueryService {
   private customerReferralRewards = new CustomerReferralRewardService();
 
-  /** Resolve JWT sub / profile id aliases so order lists don't miss rows. */
-  private async customerIdAliases(customerId: string): Promise<string[]> {
-    return resolveCustomerIdAliases(customerId);
-  }
-
-  async listCustomerOrders(customerId: string, limit: number, offset: number) {
-    const ids = await this.customerIdAliases(customerId);
+  async listCustomerOrders(customerId: string, limit: number, offset: number, extraIds: string[] = []) {
+    const ids = await resolveCustomerIdAliases(customerId, extraIds);
     if (!ids.length) return [[], 0] as [Order[], number];
     // Historical checkout versions could persist either the Keycloak subject or
     // the profile UUID in customer_id. The immutable checkout snapshot is a
@@ -26,8 +21,7 @@ export class CommerceQueryService {
         new Brackets((where) => {
           where
             .where('o.customer_id IN (:...ids)', { ids })
-            .orWhere("o.metadata ->> 'customerProfileId' IN (:...ids)", { ids })
-            .orWhere("o.metadata ->> 'customerKeycloakUserId' IN (:...ids)", { ids });
+            .orWhere(orderMetadataIdentitySql('o', 'ids'), { ids });
         }),
       )
       .orderBy('o.created_at', 'DESC')
@@ -40,12 +34,18 @@ export class CommerceQueryService {
     return AppDataSource.getRepository(Order).findOne({ where: { id } });
   }
 
-  async customerOwnsOrder(tokenCustomerId: string, order: Order): Promise<boolean> {
-    const aliases = await this.customerIdAliases(tokenCustomerId);
+  async customerOwnsOrder(tokenCustomerId: string, order: Order, extraIds: string[] = []): Promise<boolean> {
+    const aliases = await resolveCustomerIdAliases(tokenCustomerId, extraIds);
     if (aliases.includes(String(order.customerId || ''))) return true;
     const meta = (order.metadata || {}) as Record<string, unknown>;
-    const profileId = meta.customerProfileId != null ? String(meta.customerProfileId) : '';
-    return Boolean(profileId && aliases.includes(profileId));
+    const stamps = [
+      meta.customerProfileId,
+      meta.customerKeycloakUserId,
+      meta.customerAuthId,
+    ]
+      .map((v) => (v != null ? String(v).trim() : ''))
+      .filter(Boolean);
+    return stamps.some((stamp) => aliases.includes(stamp));
   }
 
   async createOrder(input: {
