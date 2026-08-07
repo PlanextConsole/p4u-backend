@@ -1,6 +1,7 @@
 import { AppDataSource } from '../config/database';
 import { VendorRegistrationRequest } from '../entities/VendorRegistrationRequest';
 import { CreateVendorRegistrationDto } from '../dto/create-vendor-registration.dto';
+import { titleCaseAddressJson, titleCaseWords } from '../utils/titleCase';
 
 export class VendorRegistrationService {
   async submitRegistration(
@@ -18,12 +19,14 @@ export class VendorRegistrationService {
 
     const row = repo.create({
       customerId,
-      businessName: dto.businessName,
-      ownerName: dto.ownerName,
+      businessName: titleCaseWords(dto.businessName),
+      ownerName: titleCaseWords(dto.ownerName),
       email: dto.email ?? null,
       phone: dto.phone ?? null,
-      businessType: dto.businessType ?? null,
-      addressJson: dto.address ?? null,
+      businessType: dto.businessType ? titleCaseWords(dto.businessType) : null,
+      addressJson: titleCaseAddressJson(
+        (dto.address as Record<string, unknown> | null | undefined) ?? null,
+      ) as VendorRegistrationRequest['addressJson'],
       documentsJson: dto.documents ?? null,
       categoriesJson: dto.categories ?? null,
       description: dto.description ?? null,

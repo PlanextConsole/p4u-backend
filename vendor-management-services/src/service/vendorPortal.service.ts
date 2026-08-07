@@ -18,6 +18,7 @@ import { UpdateVendorOrganizationOrderDto } from '../dto/update-organization-ord
 import { enrichOrderForVendorPortal, enrichOrdersForVendorPortal } from './vendorOrderEnrichment';
 import { VendorNotificationEmitter } from './vendorNotificationEmitter';
 import { jsonText } from '../util/jsonPathSql';
+import { titleCaseAddressJson, titleCaseWords } from '../utils/titleCase';
 
 function metaRecord(m: unknown): Record<string, unknown> {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
@@ -90,8 +91,8 @@ export class VendorPortalService {
     const repo = AppDataSource.getRepository(Vendor);
     const row = await repo.findOne({ where: { id: vendorId } });
     if (!row) throw new Error('Vendor not found');
-    if (dto.businessName !== undefined) row.businessName = dto.businessName;
-    if (dto.ownerName !== undefined) row.ownerName = dto.ownerName;
+    if (dto.businessName !== undefined) row.businessName = titleCaseWords(dto.businessName);
+    if (dto.ownerName !== undefined) row.ownerName = titleCaseWords(dto.ownerName);
     if (dto.age !== undefined) row.age = dto.age;
     if (dto.gender !== undefined) row.gender = dto.gender;
     if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = normalizeMediaUrl(dto.thumbnailUrl);
@@ -106,7 +107,11 @@ export class VendorPortalService {
     if (dto.trending !== undefined) row.trending = dto.trending;
     if (dto.appliedReferralCode !== undefined) row.appliedReferralCode = dto.appliedReferralCode;
     if (dto.aboutBusiness !== undefined) row.aboutBusiness = dto.aboutBusiness;
-    if (dto.addressJson !== undefined) row.addressJson = dto.addressJson;
+    if (dto.addressJson !== undefined) {
+      row.addressJson = titleCaseAddressJson(
+        dto.addressJson as Record<string, unknown> | null | undefined,
+      ) as Vendor['addressJson'];
+    }
     if (dto.categoriesJson !== undefined) row.categoriesJson = dto.categoriesJson;
     if (dto.servicesJson !== undefined) row.servicesJson = dto.servicesJson;
     if (dto.commissionRate !== undefined) row.commissionRate = dto.commissionRate;

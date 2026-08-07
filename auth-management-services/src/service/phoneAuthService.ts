@@ -14,6 +14,7 @@ import { VendorRegistrationRequest } from '../entity/VendorRegistrationRequest';
 import { UserRepository } from '../repository/userRepository';
 import { User } from '../entity/User';
 import { AuthResponse } from '../dto/AuthResponse';
+import { titleCaseAddressJson, titleCaseWords } from '../utils/titleCase';
 
 /**
  * Phone-OTP based auth flow. Customer/Vendor web apps use the Firebase
@@ -467,9 +468,11 @@ export class PhoneAuthService {
     const vendorType = payload.vendorType === 'BOTH' ? 'BOTH' : payload.vendorType === 'SERVICE' ? 'SERVICE' : 'PRODUCT';
     return {
       source: 'vendor-web-no-otp',
-      ownerName: (payload.ownerName || '').trim(),
-      businessName: (payload.businessName || '').trim(),
-      businessType: nullableTrim(payload.businessType),
+      ownerName: titleCaseWords(payload.ownerName),
+      businessName: titleCaseWords(payload.businessName),
+      businessType: nullableTrim(payload.businessType)
+        ? titleCaseWords(nullableTrim(payload.businessType))
+        : null,
       email: (payload.email || '')?.toString().trim().toLowerCase() || null,
       phone: e164,
       secondaryPhone: nullableTrim(payload.secondaryPhone),
@@ -479,7 +482,9 @@ export class PhoneAuthService {
       pan: nullableTrim(payload.pan),
       categoriesJson: payload.categoriesJson ?? null,
       servicesJson: payload.servicesJson ?? null,
-      addressJson: payload.addressJson ?? null,
+      addressJson: titleCaseAddressJson(
+        (payload.addressJson as Record<string, unknown> | null | undefined) ?? null,
+      ) ?? null,
       documentsJson: payload.documentsJson ?? null,
       bankJson: payload.bankJson ?? null,
     };
@@ -839,8 +844,8 @@ export class PhoneAuthService {
     const claims = await verifyPhoneIdToken(payload.firebaseIdToken);
     const phone = claims.phoneNumber; // E.164
 
-    const ownerName = (payload.ownerName || '').trim();
-    const businessName = (payload.businessName || '').trim();
+    const ownerName = titleCaseWords(payload.ownerName);
+    const businessName = titleCaseWords(payload.businessName);
     if (!ownerName) throw new Error('Owner name is required');
     if (!businessName) throw new Error('Business name is required');
     const requestedKind = payload.vendorKind === 'both' ? 'both' : payload.vendorKind === 'service' ? 'service' : 'product';
@@ -929,7 +934,9 @@ export class PhoneAuthService {
       vendor.pan = nullableTrim(payload.pan);
       vendor.categoriesJson = payload.categoriesJson ?? null;
       vendor.servicesJson = payload.servicesJson ?? null;
-      vendor.addressJson = payload.addressJson ?? null;
+      vendor.addressJson = titleCaseAddressJson(
+        (payload.addressJson as Record<string, unknown> | null | undefined) ?? null,
+      ) ?? null;
       vendor.documentsJson = payload.documentsJson ?? null;
       vendor.bankJson = payload.bankJson ?? null;
       vendor.vendorKind = vendorKind;

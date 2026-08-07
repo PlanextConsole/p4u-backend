@@ -11,6 +11,7 @@ import { Vendor } from '../entities/Vendor';
 import { VendorService } from '../entities/VendorService';
 import { normalizeDocumentsJson, normalizeMediaUrl, normalizeMediaUrlList } from '../util/normalizeMediaUrl';
 import { CustomerLocation, visibleVendorIds } from './vendorCoverage.service';
+import { titleCaseWords } from '../utils/titleCase';
 
 function normCategory<T extends PublicCategory>(c: T): T {
   return {
@@ -51,6 +52,8 @@ function normVendor<T extends {
   thumbnailUrl?: string | null;
   bannerUrl?: string | null;
   documentsJson?: Record<string, unknown> | null;
+  businessName?: string | null;
+  ownerName?: string | null;
 }>(v: T): T {
   return {
     ...v,
@@ -58,6 +61,10 @@ function normVendor<T extends {
     thumbnailUrl: normalizeMediaUrl(v.thumbnailUrl ?? null),
     bannerUrl: normalizeMediaUrl(v.bannerUrl ?? null),
     documentsJson: normalizeDocumentsJson(v.documentsJson ?? null),
+    ...(v.businessName != null
+      ? { businessName: titleCaseWords(String(v.businessName)) }
+      : {}),
+    ...(v.ownerName != null ? { ownerName: titleCaseWords(String(v.ownerName)) } : {}),
   };
 }
 
@@ -308,7 +315,7 @@ export class CatalogQueryService {
       const v = p.vendorId ? vendorMap.get(p.vendorId) : undefined;
       return normProduct({
         ...p,
-        vendorBusinessName: v?.businessName ?? null,
+        vendorBusinessName: v?.businessName ? titleCaseWords(v.businessName) : null,
         vendorLogoUrl: normalizeMediaUrl(v?.logoUrl ?? null),
       } as Product & { vendorBusinessName: string | null; vendorLogoUrl: string | null });
     });
@@ -525,7 +532,7 @@ export class CatalogQueryService {
     if (matchType('category')) {
       const pcQb = AppDataSource.getRepository(ProductCategory)
         .createQueryBuilder('c')
-        .where('c.name LIKE :like', { like })
+        .where('c.name ILIKE :like', { like })
         .orderBy('c.sortOrder', 'ASC')
         .addOrderBy('c.name', 'ASC')
         .skip(typedOffset)
@@ -537,7 +544,7 @@ export class CatalogQueryService {
       if (!wanted) {
         const scQb = AppDataSource.getRepository(ServiceCategory)
           .createQueryBuilder('c')
-          .where('c.name LIKE :like', { like })
+          .where('c.name ILIKE :like', { like })
           .orderBy('c.sortOrder', 'ASC')
           .addOrderBy('c.name', 'ASC')
           .take(typedLimit);
@@ -550,7 +557,7 @@ export class CatalogQueryService {
     if (matchType('subcategory')) {
       const ssQb = AppDataSource.getRepository(ServiceSubcategory)
         .createQueryBuilder('s')
-        .where('s.name LIKE :like', { like })
+        .where('s.name ILIKE :like', { like })
         .orderBy('s.sortOrder', 'ASC')
         .addOrderBy('s.name', 'ASC')
         .skip(typedOffset)
@@ -563,7 +570,7 @@ export class CatalogQueryService {
     if (matchType('vendor')) {
       const vendorsQb = AppDataSource.getRepository(Vendor)
         .createQueryBuilder('v')
-        .where('v.businessName LIKE :like OR v.ownerName LIKE :like', { like })
+        .where('v.businessName ILIKE :like OR v.ownerName ILIKE :like', { like })
         .orderBy('v.updatedAt', 'DESC')
         .skip(typedOffset)
         .take(typedLimit);
@@ -582,7 +589,7 @@ export class CatalogQueryService {
     if (matchType('product')) {
       const productsQb = AppDataSource.getRepository(Product)
         .createQueryBuilder('p')
-        .where('p.name LIKE :like OR p.description LIKE :like', { like })
+        .where('p.name ILIKE :like OR p.description ILIKE :like', { like })
         .orderBy('p.updatedAt', 'DESC')
         .skip(typedOffset)
         .take(typedLimit);
@@ -594,7 +601,7 @@ export class CatalogQueryService {
     if (matchType('service')) {
       const servicesQb = AppDataSource.getRepository(CatalogServiceItem)
         .createQueryBuilder('s')
-        .where('s.name LIKE :like OR s.description LIKE :like', { like })
+        .where('s.name ILIKE :like OR s.description ILIKE :like', { like })
         .orderBy('s.sortOrder', 'ASC')
         .addOrderBy('s.name', 'ASC')
         .skip(typedOffset)

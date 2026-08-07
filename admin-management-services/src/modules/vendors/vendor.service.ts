@@ -10,6 +10,7 @@ import { ApproveVendorRequestDto } from './dto/approve-vendor-request.dto';
 import { VendorReferralService } from './vendor.referral.service';
 import { assertCreateVendorRules, assertUpdateVendorRules } from './vendor.validation';
 import { CatalogAdminService } from '../catalog/catalog.service';
+import { titleCaseAddressJson, titleCaseWords } from '../../utils/titleCase';
 
 const PENDING_VENDOR_STATUSES = ['pending', 'not_verified'] as const;
 
@@ -396,8 +397,8 @@ export class VendorAdminService {
     };
     const repo = AppDataSource.getRepository(Vendor);
     const row = repo.create({
-      businessName: String(dto.businessName).trim(),
-      ownerName: String(dto.ownerName).trim(),
+      businessName: titleCaseWords(dto.businessName),
+      ownerName: titleCaseWords(dto.ownerName),
       age: dto.age ?? null,
       gender: dto.gender ?? null,
       thumbnailUrl: dto.thumbnailUrl ?? null,
@@ -416,7 +417,9 @@ export class VendorAdminService {
       kycStatus: dto.kycStatus ?? 'not_started',
       categoriesJson: dto.categoriesJson ?? null,
       servicesJson: dto.servicesJson ?? null,
-      addressJson: dto.addressJson ?? null,
+      addressJson: titleCaseAddressJson(
+        (dto.addressJson as Record<string, unknown> | null | undefined) ?? null,
+      ) as Vendor['addressJson'],
       commissionRate: dto.commissionRate ?? null,
       maxRedemptionPercent: dto.maxRedemptionPercent ?? null,
       vendorPlanId: dto.vendorPlanId ?? null,
@@ -463,8 +466,8 @@ export class VendorAdminService {
     const nextPhone = dto.phone !== undefined ? dto.phone : row.phone;
     const nextEmail = dto.email !== undefined ? dto.email : row.email;
     await this.assertUniqueVendorContact(nextPhone, nextEmail, row.id);
-    if (dto.businessName !== undefined) row.businessName = String(dto.businessName).trim();
-    if (dto.ownerName !== undefined) row.ownerName = String(dto.ownerName).trim();
+    if (dto.businessName !== undefined) row.businessName = titleCaseWords(dto.businessName);
+    if (dto.ownerName !== undefined) row.ownerName = titleCaseWords(dto.ownerName);
     if (dto.age !== undefined) row.age = dto.age;
     if (dto.gender !== undefined) row.gender = dto.gender;
     if (dto.thumbnailUrl !== undefined) row.thumbnailUrl = dto.thumbnailUrl;
@@ -483,7 +486,11 @@ export class VendorAdminService {
     if (dto.kycStatus !== undefined) row.kycStatus = dto.kycStatus;
     if (dto.categoriesJson !== undefined) row.categoriesJson = dto.categoriesJson;
     if (dto.servicesJson !== undefined) row.servicesJson = dto.servicesJson;
-    if (dto.addressJson !== undefined) row.addressJson = dto.addressJson;
+    if (dto.addressJson !== undefined) {
+      row.addressJson = titleCaseAddressJson(
+        dto.addressJson as Record<string, unknown> | null | undefined,
+      ) as Vendor['addressJson'];
+    }
     if (dto.commissionRate !== undefined) row.commissionRate = dto.commissionRate;
     if (dto.maxRedemptionPercent !== undefined) row.maxRedemptionPercent = dto.maxRedemptionPercent;
     if (dto.vendorPlanId !== undefined) row.vendorPlanId = dto.vendorPlanId;
@@ -598,8 +605,8 @@ export class VendorAdminService {
           return { vendor: existing, request, isNew: false };
         }
       }
-      const businessName = String(dto.businessName || payload.businessName || '').trim();
-      const ownerName = String(dto.ownerName || payload.ownerName || '').trim();
+      const businessName = titleCaseWords(dto.businessName || payload.businessName);
+      const ownerName = titleCaseWords(dto.ownerName || payload.ownerName);
       if (!businessName || !ownerName) {
         throw new Error('Request payload missing businessName/ownerName; provide them in request body');
       }
@@ -635,7 +642,11 @@ export class VendorAdminService {
         pan: payload.pan != null && String(payload.pan).trim() !== '' ? String(payload.pan).trim() : null,
         categoriesJson: payload.categoriesJson ?? payload.categories ?? null,
         servicesJson: payload.servicesJson ?? payload.services ?? null,
-        addressJson: (payload.addressJson as Record<string, unknown> | null) ?? (payload.address as Record<string, unknown> | null) ?? null,
+        addressJson: titleCaseAddressJson(
+          ((payload.addressJson as Record<string, unknown> | null) ??
+            (payload.address as Record<string, unknown> | null) ??
+            null) as Record<string, unknown> | null,
+        ) as Vendor['addressJson'],
         documentsJson: (payload.documentsJson as Record<string, unknown> | null) ?? null,
         bankJson: (payload.bankJson as Record<string, unknown> | null) ?? null,
         notes: dto.notes != null ? String(dto.notes) : null,
