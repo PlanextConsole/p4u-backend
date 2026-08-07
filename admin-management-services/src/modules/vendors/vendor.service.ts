@@ -605,8 +605,8 @@ export class VendorAdminService {
           return { vendor: existing, request, isNew: false };
         }
       }
-      const businessName = titleCaseWords(dto.businessName || payload.businessName);
-      const ownerName = titleCaseWords(dto.ownerName || payload.ownerName);
+      const businessName = titleCaseWords(String(dto.businessName || payload.businessName || ''));
+      const ownerName = titleCaseWords(String(dto.ownerName || payload.ownerName || ''));
       if (!businessName || !ownerName) {
         throw new Error('Request payload missing businessName/ownerName; provide them in request body');
       }

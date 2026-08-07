@@ -1,14 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { CatalogQueryService, type CategoryKind } from '../service/catalogQuery.service';
 import type { CustomerLocation } from '../service/vendorCoverage.service';
-import { CatalogServiceItem } from '../entities/CatalogServiceItem';
 import { sendSuccess, sendNotFound, sendBadRequest, sendServerError } from '../middleware/responseEnvelope';
 
-/** Include legacy `categoryId` alias (same as service_category_id) for web clients. */
-function toPublicService(s: CatalogServiceItem) {
+/** Include legacy `categoryId` alias for web clients. */
+function toPublicService(s: {
+  serviceCategoryId?: string | null;
+  categoryId?: string | null;
+}) {
   return {
-    ...s,
-    categoryId: s.serviceCategoryId,
+    ...(s as object),
+    categoryId: s.categoryId ?? s.serviceCategoryId ?? null,
   };
 }
 
